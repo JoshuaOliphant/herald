@@ -1,5 +1,5 @@
 # ABOUTME: Tests for Herald webhook handler
-# ABOUTME: Validates user authorization and message routing
+# ABOUTME: Validates user authorization, message routing, and /reset command
 
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
@@ -18,7 +18,6 @@ def mock_settings():
         telegram_bot_token="test_token_123",
         allowed_telegram_user_ids=[12345, 67890],
         second_brain_path=Path("/tmp"),
-        claude_code_path=Path("/usr/bin/true"),
     )
 
 
@@ -30,6 +29,8 @@ def mock_executor():
         success=True,
         output="Test response",
     ))
+    executor.reset_chat = AsyncMock()
+    executor.shutdown = AsyncMock()
     return executor
 
 
@@ -54,7 +55,6 @@ class TestWebhookHandler:
             telegram_bot_token="test_token",
             allowed_telegram_user_ids=[],
             second_brain_path=Path("/tmp"),
-            claude_code_path=Path("/usr/bin/true"),
         )
         handler = WebhookHandler(settings, mock_executor)
         assert handler._is_user_allowed(12345) is False
@@ -167,7 +167,86 @@ class TestWebhookHandlerAsync:
 
         await handler.handle_update(update)
 
-        # Should execute the prompt
-        mock_executor.execute.assert_called_once_with("What's on my todo list?")
+        # Should execute the prompt with chat_id
+        mock_executor.execute.assert_called_once_with("What's on my todo list?", 12345)
         # Should send the response
         assert handler._http_client.post.call_count >= 1
+
+    async def test_handle_reset_command(self, mock_settings, mock_executor):
+        """The /reset command should clear conversation history."""
+        handler = WebhookHandler(mock_settings, mock_executor)
+        handler._http_client = AsyncMock()
+        handler._http_client.post = AsyncMock(return_value=MagicMock(status_code=200))
+
+        update = TelegramUpdate(
+            update_id=1,
+            message={
+                "from": {"id": 12345, "username": "laboeuf"},
+                "chat": {"id": 12345},
+                "text": "/reset",
+            },
+        )
+
+        await handler.handle_update(update)
+
+        # Should call reset_chat, not execute
+        mock_executor.reset_chat.assert_called_once_with(12345)
+        mock_executor.execute.assert_not_called()
+        # Should send confirmation message
+        handler._http_client.post.assert_called()
+        call_args = handler._http_client.post.call_args
+        assert "reset" in str(call_args).lower()
+
+    async def test_handle_reset_command_case_insensitive(self, mock_settings, mock_executor):
+        """The /reset command should be case insensitive."""
+        handler = WebhookHandler(mock_settings, mock_executor)
+        handler._http_client = AsyncMock()
+        handler._http_client.post = AsyncMock(return_value=MagicMock(status_code=200))
+
+        update = TelegramUpdate(
+            update_id=1,
+            message={
+                "from": {"id": 12345, "username": "laboeuf"},
+                "chat": {"id": 12345},
+                "text": "/RESET",
+            },
+        )
+
+        await handler.handle_update(update)
+
+        mock_executor.reset_chat.assert_called_once_with(12345)
+        mock_executor.execute.assert_not_called()
+
+    async def test_stop_calls_executor_shutdown(self, mock_settings, mock_executor):
+        """Stopping the handler should shutdown the executor."""
+        handler = WebhookHandler(mock_settings, mock_executor)
+        mock_http_client = AsyncMock()
+        mock_http_client.aclose = AsyncMock()
+        handler._http_client = mock_http_client
+
+        await handler.stop()
+
+        mock_executor.shutdown.assert_called_once()
+        mock_http_client.aclose.assert_called_once()
+
+    async def test_deduplication_prevents_double_processing(self, mock_settings, mock_executor):
+        """Same update ID should only be processed once."""
+        handler = WebhookHandler(mock_settings, mock_executor)
+        handler._http_client = AsyncMock()
+        handler._http_client.post = AsyncMock(return_value=MagicMock(status_code=200))
+
+        update = TelegramUpdate(
+            update_id=1,
+            message={
+                "from": {"id": 12345, "username": "laboeuf"},
+                "chat": {"id": 12345},
+                "text": "Hello",
+            },
+        )
+
+        # Process same update twice
+        await handler.handle_update(update)
+        await handler.handle_update(update)
+
+        # Should only execute once
+        mock_executor.execute.assert_called_once()

@@ -37,7 +37,6 @@ def main():
         sys.exit(1)
 
     logger.info(f"Second brain path: {settings.second_brain_path}")
-    logger.info(f"Claude Code path: {settings.claude_code_path}")
     logger.info(f"Allowed users: {settings.allowed_telegram_user_ids}")
     logger.info(f"Webhook path: {settings.webhook_path}")
 

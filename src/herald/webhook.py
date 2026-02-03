@@ -1,7 +1,9 @@
 # ABOUTME: FastAPI webhook handler for Telegram updates
 # ABOUTME: Receives messages, validates users, and routes to Claude Code
 
+import asyncio
 import logging
+from collections import OrderedDict
 from contextlib import asynccontextmanager
 from typing import Any
 
@@ -31,6 +33,9 @@ class WebhookHandler:
         self.settings = settings
         self.executor = executor
         self._http_client: httpx.AsyncClient | None = None
+        # Track processed update IDs to prevent duplicate processing from Telegram retries
+        self._processed_updates: OrderedDict[int, bool] = OrderedDict()
+        self._max_tracked_updates = 1000  # Limit memory usage
 
     async def start(self) -> None:
         """Initialize async resources."""
@@ -41,6 +46,8 @@ class WebhookHandler:
         if self._http_client:
             await self._http_client.aclose()
             self._http_client = None
+        # Shutdown executor (disconnects all SDK clients)
+        await self.executor.shutdown()
 
     @property
     def http_client(self) -> httpx.AsyncClient:
@@ -48,8 +55,23 @@ class WebhookHandler:
             raise RuntimeError("WebhookHandler not started")
         return self._http_client
 
+    def _mark_processed(self, update_id: int) -> bool:
+        """Mark an update as processed. Returns False if already processed."""
+        if update_id in self._processed_updates:
+            return False
+        self._processed_updates[update_id] = True
+        # Trim old entries to limit memory usage
+        while len(self._processed_updates) > self._max_tracked_updates:
+            self._processed_updates.popitem(last=False)
+        return True
+
     async def handle_update(self, update: TelegramUpdate) -> None:
         """Process an incoming Telegram update."""
+        # Deduplicate - Telegram retries if we don't respond quickly
+        if not self._mark_processed(update.update_id):
+            logger.debug(f"Update {update.update_id} already processed, skipping")
+            return
+
         # Get the message (could be new or edited)
         message = update.message or update.edited_message
         if not message:
@@ -59,30 +81,41 @@ class WebhookHandler:
         # Extract sender info
         from_user = message.get("from", {})
         user_id = from_user.get("id")
-        username = from_user.get("username", "unknown")
+        display_name = (
+            from_user.get("first_name")
+            or from_user.get("username")
+            or "unknown"
+        )
         chat_id = message.get("chat", {}).get("id")
         text = message.get("text", "")
 
         if not text:
-            logger.debug(f"Message from {username} has no text, ignoring")
+            logger.debug(f"Message from {display_name} has no text, ignoring")
             return
 
         # Security: Check if user is allowed
         if not self._is_user_allowed(user_id):
-            logger.warning(f"Unauthorized user {user_id} ({username}) attempted access")
+            logger.warning(f"Unauthorized user {user_id} ({display_name}) attempted access")
             await self._send_message(
                 chat_id,
                 "⛔ Unauthorized. This bot is private.",
             )
             return
 
-        logger.info(f"Processing message from {username} ({user_id}): {text[:50]}...")
+        # Handle /reset command - clears conversation history
+        if text.strip().lower() == "/reset":
+            logger.info(f"Reset command from {display_name} ({user_id}) for chat {chat_id}")
+            await self.executor.reset_chat(chat_id)
+            await self._send_message(chat_id, "🔄 Conversation reset. Starting fresh!")
+            return
+
+        logger.info(f"Processing message from {display_name} ({user_id}): {text[:50]}...")
 
         # Send typing indicator
         await self._send_chat_action(chat_id, "typing")
 
-        # Execute through Claude Code
-        result = await self.executor.execute(text)
+        # Execute through Claude Code (with chat_id for conversation continuity)
+        result = await self.executor.execute(text, chat_id)
 
         if result.success:
             # Format and send response
@@ -152,7 +185,6 @@ def create_app(settings: Settings) -> FastAPI:
         nonlocal handler
         # Startup
         executor = create_executor(
-            claude_path=settings.claude_code_path,
             working_dir=settings.second_brain_path,
             timeout=settings.command_timeout,
         )
@@ -186,8 +218,8 @@ def create_app(settings: Settings) -> FastAPI:
         try:
             data = await request.json()
             update = TelegramUpdate(**data)
-            # Process in background to return quickly to Telegram
-            await handler.handle_update(update)
+            # Process in background - return immediately to prevent Telegram retries
+            asyncio.create_task(handler.handle_update(update))
             return {"ok": True}
         except Exception as e:
             logger.exception(f"Error processing webhook: {e}")

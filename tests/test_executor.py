@@ -1,8 +1,7 @@
-# ABOUTME: Tests for Herald Claude Code executor
-# ABOUTME: Validates command execution and output parsing
+# ABOUTME: Tests for Herald Claude Code executor using Agent SDK
+# ABOUTME: Validates SDK client management and conversation continuity
 
-import json
-from pathlib import Path
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -28,108 +27,261 @@ class TestExecutionResult:
 
 
 class TestClaudeExecutor:
-    """Tests for ClaudeExecutor class."""
+    """Tests for ClaudeExecutor class with SDK mocking."""
 
-    def test_parse_output_with_result(self):
-        """Should extract text from result event."""
-        executor = ClaudeExecutor(
-            claude_path=Path("/fake/claude"),
-            working_dir=Path("/tmp"),
-        )
+    @pytest.fixture
+    def executor(self, tmp_path):
+        """Create an executor with a valid working directory."""
+        return ClaudeExecutor(working_dir=tmp_path)
 
-        stdout = json.dumps({"type": "result", "result": "Final answer"})
-        result = executor._parse_output(stdout)
+    @pytest.fixture
+    def mock_text_block(self):
+        """Create a mock TextBlock."""
+        block = MagicMock()
+        block.text = "Hello from Claude"
+        return block
 
-        assert result.success is True
-        assert result.output == "Final answer"
+    @pytest.fixture
+    def mock_assistant_message(self, mock_text_block):
+        """Create a mock AssistantMessage."""
+        msg = MagicMock()
+        msg.content = [mock_text_block]
+        return msg
 
-    def test_parse_output_with_assistant_messages(self):
-        """Should extract text from assistant message events."""
-        executor = ClaudeExecutor(
-            claude_path=Path("/fake/claude"),
-            working_dir=Path("/tmp"),
-        )
+    @pytest.fixture
+    def mock_result_message(self):
+        """Create a mock ResultMessage."""
+        msg = MagicMock()
+        msg.result = "Final answer"
+        return msg
 
-        events = [
-            {"type": "assistant", "message": {"content": [{"type": "text", "text": "Hello "}]}},
-            {"type": "assistant", "message": {"content": [{"type": "text", "text": "world"}]}},
-        ]
-        stdout = "\n".join(json.dumps(e) for e in events)
-        result = executor._parse_output(stdout)
+    @pytest.mark.asyncio
+    async def test_execute_creates_client_for_new_chat(self, executor):
+        """Should create a new client for a chat that doesn't have one."""
+        with patch("herald.executor.ClaudeSDKClient") as mock_client_class:
+            # Setup mock client
+            mock_client = AsyncMock()
+            mock_client.connect = AsyncMock()
+            mock_client.query = AsyncMock()
 
-        assert result.success is True
-        assert "Hello" in result.output
-        assert "world" in result.output
+            # Mock receive_response to return a result message
+            mock_result = MagicMock()
+            mock_result.result = "Test response"
 
-    def test_parse_output_prefers_result(self):
-        """Result event should take precedence over assistant messages."""
-        executor = ClaudeExecutor(
-            claude_path=Path("/fake/claude"),
-            working_dir=Path("/tmp"),
-        )
+            async def mock_receive():
+                yield mock_result
 
-        events = [
-            {
-                "type": "assistant",
-                "message": {"content": [{"type": "text", "text": "Thinking..."}]},
-            },
-            {"type": "result", "result": "Final answer"},
-        ]
-        stdout = "\n".join(json.dumps(e) for e in events)
-        result = executor._parse_output(stdout)
+            mock_client.receive_response = mock_receive
+            mock_client_class.return_value = mock_client
 
-        assert result.output == "Final answer"
+            # Patch isinstance checks
+            with patch("herald.executor.ResultMessage", type(mock_result)):
+                result = await executor.execute("Hello", chat_id=12345)
 
-    def test_parse_output_handles_non_json(self):
-        """Should gracefully handle non-JSON lines."""
-        executor = ClaudeExecutor(
-            claude_path=Path("/fake/claude"),
-            working_dir=Path("/tmp"),
-        )
+            assert result.success is True
+            assert result.output == "Test response"
+            mock_client.connect.assert_called_once()
+            mock_client.query.assert_called_once_with("Hello")
 
-        stdout = "Some random text\n" + json.dumps({"type": "result", "result": "Answer"})
-        result = executor._parse_output(stdout)
+    @pytest.mark.asyncio
+    async def test_execute_reuses_client_for_same_chat(self, executor):
+        """Should reuse existing client for the same chat (conversation continuity)."""
+        with patch("herald.executor.ClaudeSDKClient") as mock_client_class:
+            mock_client = AsyncMock()
+            mock_client.connect = AsyncMock()
+            mock_client.query = AsyncMock()
 
-        assert result.success is True
-        assert result.output == "Answer"
+            mock_result = MagicMock()
+            mock_result.result = "Response"
+
+            async def mock_receive():
+                yield mock_result
+
+            mock_client.receive_response = mock_receive
+            mock_client_class.return_value = mock_client
+
+            with patch("herald.executor.ResultMessage", type(mock_result)):
+                # First call
+                await executor.execute("First message", chat_id=12345)
+                # Second call to same chat
+                await executor.execute("Second message", chat_id=12345)
+
+            # Client should only be created once
+            assert mock_client_class.call_count == 1
+            mock_client.connect.assert_called_once()
+            # But query should be called twice
+            assert mock_client.query.call_count == 2
+
+    @pytest.mark.asyncio
+    async def test_execute_creates_separate_clients_per_chat(self, executor):
+        """Should create separate clients for different chats."""
+        with patch("herald.executor.ClaudeSDKClient") as mock_client_class:
+            mock_client = AsyncMock()
+            mock_client.connect = AsyncMock()
+            mock_client.query = AsyncMock()
+
+            mock_result = MagicMock()
+            mock_result.result = "Response"
+
+            async def mock_receive():
+                yield mock_result
+
+            mock_client.receive_response = mock_receive
+            mock_client_class.return_value = mock_client
+
+            with patch("herald.executor.ResultMessage", type(mock_result)):
+                # Calls to different chats
+                await executor.execute("Message 1", chat_id=11111)
+                await executor.execute("Message 2", chat_id=22222)
+
+            # Should create two separate clients
+            assert mock_client_class.call_count == 2
+
+    @pytest.mark.asyncio
+    async def test_execute_extracts_text_from_assistant_messages(self, executor):
+        """Should extract text from AssistantMessage when no result."""
+        from claude_agent_sdk import AssistantMessage, ResultMessage, TextBlock
+
+        with patch("herald.executor.ClaudeSDKClient") as mock_client_class:
+            mock_client = AsyncMock()
+            mock_client.connect = AsyncMock()
+            mock_client.query = AsyncMock()
+
+            # Create real SDK message types for proper isinstance checks
+            mock_text_block = MagicMock(spec=TextBlock)
+            mock_text_block.text = "Hello "
+
+            mock_text_block2 = MagicMock(spec=TextBlock)
+            mock_text_block2.text = "world"
+
+            mock_assistant = MagicMock(spec=AssistantMessage)
+            mock_assistant.content = [mock_text_block]
+
+            mock_assistant2 = MagicMock(spec=AssistantMessage)
+            mock_assistant2.content = [mock_text_block2]
+
+            mock_result = MagicMock(spec=ResultMessage)
+            mock_result.result = None  # No result text
+
+            async def mock_receive():
+                yield mock_assistant
+                yield mock_assistant2
+                yield mock_result
+
+            mock_client.receive_response = mock_receive
+            mock_client_class.return_value = mock_client
+
+            result = await executor.execute("Hello", chat_id=12345)
+
+            assert result.success is True
+            assert "Hello" in result.output
+            assert "world" in result.output
+
+    @pytest.mark.asyncio
+    async def test_reset_chat_disconnects_client(self, executor):
+        """Should disconnect and remove client when reset."""
+        with patch("herald.executor.ClaudeSDKClient") as mock_client_class:
+            mock_client = AsyncMock()
+            mock_client.connect = AsyncMock()
+            mock_client.disconnect = AsyncMock()
+            mock_client.query = AsyncMock()
+
+            mock_result = MagicMock()
+            mock_result.result = "Response"
+
+            async def mock_receive():
+                yield mock_result
+
+            mock_client.receive_response = mock_receive
+            mock_client_class.return_value = mock_client
+
+            with patch("herald.executor.ResultMessage", type(mock_result)):
+                # Create a client
+                await executor.execute("Hello", chat_id=12345)
+                assert 12345 in executor._clients
+
+                # Reset the chat
+                await executor.reset_chat(12345)
+
+            mock_client.disconnect.assert_called_once()
+            assert 12345 not in executor._clients
+
+    @pytest.mark.asyncio
+    async def test_reset_chat_noop_for_unknown_chat(self, executor):
+        """Should do nothing when resetting unknown chat."""
+        # Should not raise
+        await executor.reset_chat(99999)
+        assert 99999 not in executor._clients
+
+    @pytest.mark.asyncio
+    async def test_shutdown_disconnects_all_clients(self, executor):
+        """Should disconnect all clients on shutdown."""
+        with patch("herald.executor.ClaudeSDKClient") as mock_client_class:
+            mock_client1 = AsyncMock()
+            mock_client1.connect = AsyncMock()
+            mock_client1.disconnect = AsyncMock()
+            mock_client1.query = AsyncMock()
+
+            mock_client2 = AsyncMock()
+            mock_client2.connect = AsyncMock()
+            mock_client2.disconnect = AsyncMock()
+            mock_client2.query = AsyncMock()
+
+            mock_result = MagicMock()
+            mock_result.result = "Response"
+
+            async def mock_receive():
+                yield mock_result
+
+            mock_client1.receive_response = mock_receive
+            mock_client2.receive_response = mock_receive
+
+            # Return different clients for different calls
+            mock_client_class.side_effect = [mock_client1, mock_client2]
+
+            with patch("herald.executor.ResultMessage", type(mock_result)):
+                await executor.execute("Hello", chat_id=11111)
+                await executor.execute("Hello", chat_id=22222)
+
+                # Shutdown
+                await executor.shutdown()
+
+            mock_client1.disconnect.assert_called_once()
+            mock_client2.disconnect.assert_called_once()
+            assert len(executor._clients) == 0
+
+    @pytest.mark.asyncio
+    async def test_execute_handles_error_gracefully(self, executor):
+        """Should return error result when SDK throws."""
+        with patch("herald.executor.ClaudeSDKClient") as mock_client_class:
+            mock_client = AsyncMock()
+            mock_client.connect = AsyncMock()
+            mock_client.disconnect = AsyncMock()
+            mock_client.query = AsyncMock(side_effect=RuntimeError("SDK error"))
+            mock_client_class.return_value = mock_client
+
+            result = await executor.execute("Hello", chat_id=12345)
+
+            assert result.success is False
+            assert "SDK error" in result.error
+            # Client should be removed after error
+            assert 12345 not in executor._clients
 
 
 class TestCreateExecutor:
     """Tests for create_executor factory function."""
 
-    def test_create_with_valid_paths(self, tmp_path):
-        """Should create executor with valid paths."""
-        fake_claude = tmp_path / "claude"
-        fake_claude.touch()
-
-        executor = create_executor(
-            claude_path=fake_claude,
-            working_dir=tmp_path,
-        )
-
-        assert executor.claude_path == fake_claude
+    def test_create_with_valid_path(self, tmp_path):
+        """Should create executor with valid working directory."""
+        executor = create_executor(working_dir=tmp_path)
         assert executor.working_dir == tmp_path
-
-    def test_create_with_none_path(self, tmp_path):
-        """Should raise ValueError when claude_path is None."""
-        with pytest.raises(ValueError, match="Claude Code path is required"):
-            create_executor(claude_path=None, working_dir=tmp_path)
-
-    def test_create_with_missing_claude(self, tmp_path):
-        """Should raise ValueError when claude_path doesn't exist."""
-        with pytest.raises(ValueError, match="Claude Code not found"):
-            create_executor(
-                claude_path=tmp_path / "nonexistent",
-                working_dir=tmp_path,
-            )
 
     def test_create_with_missing_workdir(self, tmp_path):
         """Should raise ValueError when working_dir doesn't exist."""
-        fake_claude = tmp_path / "claude"
-        fake_claude.touch()
-
         with pytest.raises(ValueError, match="Working directory does not exist"):
-            create_executor(
-                claude_path=fake_claude,
-                working_dir=tmp_path / "nonexistent",
-            )
+            create_executor(working_dir=tmp_path / "nonexistent")
+
+    def test_create_with_custom_timeout(self, tmp_path):
+        """Should accept custom timeout."""
+        executor = create_executor(working_dir=tmp_path, timeout=600)
+        assert executor.timeout == 600

@@ -24,7 +24,6 @@ class Settings(BaseSettings):
     second_brain_path: Path = (
         Path.home() / "Library/CloudStorage/Dropbox/python_workspace/second_brain"
     )
-    claude_code_path: Path | None = None
 
     # Server settings
     host: str = "0.0.0.0"
@@ -47,32 +46,6 @@ class Settings(BaseSettings):
             return [int(uid.strip()) for uid in v.split(",") if uid.strip()]
         return v
 
-    @field_validator("claude_code_path", mode="before")
-    @classmethod
-    def resolve_claude_path(cls, v: str | Path | None) -> Path | None:
-        """Resolve Claude Code path, auto-detecting if not specified."""
-        if v is not None:
-            return Path(v)
-
-        # Try to find claude in common locations
-        common_paths = [
-            Path.home() / ".claude/local/claude",
-            Path("/usr/local/bin/claude"),
-            Path("/opt/homebrew/bin/claude"),
-        ]
-
-        for path in common_paths:
-            if path.exists():
-                return path
-
-        # Fall back to PATH lookup
-        import shutil
-        claude_path = shutil.which("claude")
-        if claude_path:
-            return Path(claude_path)
-
-        return None
-
     @property
     def webhook_url(self) -> str:
         """Full webhook URL for Telegram registration."""
@@ -91,13 +64,6 @@ class Settings(BaseSettings):
 
         if not self.second_brain_path.exists():
             errors.append(f"SECOND_BRAIN_PATH does not exist: {self.second_brain_path}")
-
-        if self.claude_code_path is None:
-            errors.append(
-                "Claude Code CLI not found. Set CLAUDE_CODE_PATH or ensure 'claude' is in PATH"
-            )
-        elif not self.claude_code_path.exists():
-            errors.append(f"CLAUDE_CODE_PATH does not exist: {self.claude_code_path}")
 
         return errors
 

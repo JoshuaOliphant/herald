@@ -46,7 +46,6 @@ class TestSettings:
                 telegram_bot_token="",
                 allowed_telegram_user_ids=[123],
                 second_brain_path=Path("/tmp"),
-                claude_code_path=Path("/usr/bin/true"),
             )
             errors = settings.validate_ready()
             assert any("TELEGRAM_BOT_TOKEN" in e for e in errors)
@@ -57,34 +56,26 @@ class TestSettings:
             telegram_bot_token="test_token",
             allowed_telegram_user_ids=[],
             second_brain_path=Path("/tmp"),
-            claude_code_path=Path("/usr/bin/true"),
         )
         errors = settings.validate_ready()
         assert any("ALLOWED_TELEGRAM_USER_IDS" in e for e in errors)
 
-    def test_validate_ready_invalid_paths(self):
-        """Validation should fail when paths don't exist."""
+    def test_validate_ready_invalid_second_brain_path(self):
+        """Validation should fail when second_brain_path doesn't exist."""
         settings = Settings(
             telegram_bot_token="test_token",
             allowed_telegram_user_ids=[123],
             second_brain_path=Path("/nonexistent/path"),
-            claude_code_path=Path("/nonexistent/claude"),
         )
         errors = settings.validate_ready()
         assert any("SECOND_BRAIN_PATH" in e for e in errors)
-        assert any("CLAUDE_CODE_PATH" in e for e in errors)
 
     def test_validate_ready_success(self, tmp_path):
         """Validation should pass with valid configuration."""
-        # Create a fake claude executable
-        fake_claude = tmp_path / "claude"
-        fake_claude.touch()
-
         settings = Settings(
             telegram_bot_token="test_token",
             allowed_telegram_user_ids=[123],
             second_brain_path=tmp_path,
-            claude_code_path=fake_claude,
         )
         errors = settings.validate_ready()
         assert errors == []
