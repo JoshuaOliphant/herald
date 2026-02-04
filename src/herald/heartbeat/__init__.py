@@ -2,6 +2,7 @@
 # ABOUTME: Provides utilities for time window validation, interval parsing, and heartbeat settings.
 
 from herald.heartbeat.active_hours import is_within_active_hours
+from herald.heartbeat.config import HeartbeatConfig
 from herald.heartbeat.interval import parse_interval
 
-__all__ = ["is_within_active_hours", "parse_interval"]
+__all__ = ["is_within_active_hours", "parse_interval", "HeartbeatConfig"]
