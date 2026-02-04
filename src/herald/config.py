@@ -6,6 +6,8 @@ from pathlib import Path
 from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from herald.heartbeat.config import HeartbeatConfig
+
 
 class Settings(BaseSettings):
     """Herald configuration settings loaded from environment."""
@@ -25,6 +27,16 @@ class Settings(BaseSettings):
         Path.home() / "Library/CloudStorage/Dropbox/python_workspace/second_brain"
     )
     memory_path: Path | None = None  # Relative to second_brain_path if set
+    heartbeat_file: Path | None = None  # Path to HEARTBEAT.md file
+
+    # Heartbeat settings
+    heartbeat_enabled: bool = False
+    heartbeat_every: str = "30m"
+    heartbeat_prompt: str | None = None
+    heartbeat_target: str = "last"
+    heartbeat_active_hours: str | None = None
+    heartbeat_ack_max_chars: int = 300
+    heartbeat_model: str | None = None
 
     @property
     def herald_memory_path(self) -> Path:
@@ -74,6 +86,27 @@ class Settings(BaseSettings):
             errors.append(f"SECOND_BRAIN_PATH does not exist: {self.second_brain_path}")
 
         return errors
+
+    def get_heartbeat_config(self) -> HeartbeatConfig:
+        """Build HeartbeatConfig from environment settings."""
+        return HeartbeatConfig(
+            enabled=self.heartbeat_enabled,
+            every=self.heartbeat_every,
+            prompt=self.heartbeat_prompt,
+            target=self.heartbeat_target,
+            active_hours=self.heartbeat_active_hours,
+            ack_max_chars=self.heartbeat_ack_max_chars,
+            model=self.heartbeat_model,
+        )
+
+    @property
+    def heartbeat_file_path(self) -> Path | None:
+        """Get the HEARTBEAT.md file path."""
+        if self.heartbeat_file:
+            return self.heartbeat_file
+        # Default to HEARTBEAT.md in second_brain_path
+        default_path = self.second_brain_path / "HEARTBEAT.md"
+        return default_path if default_path.exists() else None
 
 
 def get_settings() -> Settings:

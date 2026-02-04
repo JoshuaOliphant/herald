@@ -1,9 +1,10 @@
-# ABOUTME: FastAPI webhook handler for Telegram updates
-# ABOUTME: Receives messages, validates users, and routes to Claude Code
+# ABOUTME: FastAPI webhook handler for Telegram updates with heartbeat integration
+# ABOUTME: Receives messages, validates users, routes to Claude Code, and manages periodic health checks
 
 import asyncio
 import logging
 from collections import OrderedDict
+from collections.abc import Callable
 from contextlib import asynccontextmanager
 from typing import Any
 
@@ -14,6 +15,7 @@ from pydantic import BaseModel
 from .config import Settings
 from .executor import ClaudeExecutor, create_executor
 from .formatter import format_error, format_for_telegram
+from .heartbeat import HeartbeatDelivery, HeartbeatExecutor, HeartbeatScheduler
 
 logger = logging.getLogger(__name__)
 
@@ -29,10 +31,16 @@ class TelegramUpdate(BaseModel):
 class WebhookHandler:
     """Handles incoming Telegram webhook updates."""
 
-    def __init__(self, settings: Settings, executor: ClaudeExecutor):
+    def __init__(
+        self,
+        settings: Settings,
+        executor: ClaudeExecutor,
+        on_activity: Callable[[int], None] | None = None,
+    ):
         self.settings = settings
         self.executor = executor
         self._http_client: httpx.AsyncClient | None = None
+        self._on_activity = on_activity
         # Track processed update IDs to prevent duplicate processing from Telegram retries
         self._processed_updates: OrderedDict[int, bool] = OrderedDict()
         self._max_tracked_updates = 1000  # Limit memory usage
@@ -107,6 +115,10 @@ class WebhookHandler:
 
         logger.info(f"Processing message from {display_name} ({user_id}): {text[:50]}...")
 
+        # Track activity for heartbeat delivery targeting
+        if self._on_activity and chat_id:
+            self._on_activity(chat_id)
+
         # Send typing indicator
         await self._send_chat_action(chat_id, "typing")
 
@@ -175,20 +187,69 @@ class WebhookHandler:
 def create_app(settings: Settings) -> FastAPI:
     """Create and configure the FastAPI application."""
     handler: WebhookHandler | None = None
+    heartbeat_scheduler: HeartbeatScheduler | None = None
+    heartbeat_executor: HeartbeatExecutor | None = None
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
-        nonlocal handler
+        nonlocal handler, heartbeat_scheduler, heartbeat_executor
         # Startup
         executor = create_executor(
             working_dir=settings.second_brain_path,
             memory_path=settings.herald_memory_path,
         )
-        handler = WebhookHandler(settings, executor)
+
+        # Set up heartbeat components
+        heartbeat_config = settings.get_heartbeat_config()
+        heartbeat_delivery: HeartbeatDelivery | None = None
+
+        if heartbeat_config.enabled:
+            # Create a wrapper for send_message that matches the callback signature
+            async def send_message_wrapper(chat_id: int, text: str) -> None:
+                if handler:
+                    await handler._send_message(chat_id, text)
+
+            heartbeat_delivery = HeartbeatDelivery(
+                send_message=send_message_wrapper,
+                target=heartbeat_config.target,
+            )
+
+            heartbeat_executor = HeartbeatExecutor(
+                config=heartbeat_config,
+                working_dir=settings.second_brain_path,
+                heartbeat_file=settings.heartbeat_file_path,
+                memory_path=settings.herald_memory_path,
+            )
+
+            heartbeat_scheduler = HeartbeatScheduler(
+                config=heartbeat_config,
+                executor=heartbeat_executor,
+                on_alert=heartbeat_delivery.deliver,
+            )
+
+        # Create webhook handler with activity tracking
+        handler = WebhookHandler(
+            settings,
+            executor,
+            on_activity=heartbeat_delivery.record_activity if heartbeat_delivery else None,
+        )
         await handler.start()
+
+        # Start heartbeat scheduler after handler is ready
+        if heartbeat_scheduler:
+            heartbeat_scheduler.start()
+            logger.info(
+                f"Heartbeat scheduler started (interval: {heartbeat_config.interval})"
+            )
+
         logger.info("Herald started successfully")
         yield
         # Shutdown
+        if heartbeat_scheduler:
+            await heartbeat_scheduler.stop()
+            logger.info("Heartbeat scheduler stopped")
+        if heartbeat_executor:
+            await heartbeat_executor.shutdown()
         if handler:
             await handler.stop()
         logger.info("Herald stopped")
