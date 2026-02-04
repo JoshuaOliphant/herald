@@ -29,13 +29,8 @@ class ExecutionResult:
 class ClaudeExecutor:
     """Executes Claude Code queries using the Agent SDK with conversation continuity."""
 
-    def __init__(
-        self,
-        working_dir: Path,
-        timeout: int = 300,
-    ):
+    def __init__(self, working_dir: Path):
         self.working_dir = working_dir
-        self.timeout = timeout
         # Per-chat clients for conversation continuity
         self._clients: dict[int, ClaudeSDKClient] = {}
 
@@ -45,7 +40,7 @@ class ClaudeExecutor:
             cwd=self.working_dir,
             setting_sources=["user", "project"],  # Load CLAUDE.md
             permission_mode="bypassPermissions",
-            max_turns=50,
+            max_turns=200,  # Allow long-running research and multi-step tasks
         )
 
     async def _get_client(self, chat_id: int) -> ClaudeSDKClient:
@@ -89,13 +84,6 @@ class ClaudeExecutor:
                 output=final_output.strip(),
             )
 
-        except TimeoutError:
-            logger.error(f"Claude SDK timed out after {self.timeout}s")
-            return ExecutionResult(
-                success=False,
-                output="",
-                error=f"Timed out after {self.timeout} seconds",
-            )
         except Exception as e:
             logger.exception("Unexpected error in Claude SDK execution")
             # On error, remove the client so next request creates fresh one
@@ -130,15 +118,9 @@ class ClaudeExecutor:
         self._clients.clear()
 
 
-def create_executor(
-    working_dir: Path,
-    timeout: int = 300,
-) -> ClaudeExecutor:
+def create_executor(working_dir: Path) -> ClaudeExecutor:
     """Factory function to create a ClaudeExecutor with validation."""
     if not working_dir.exists():
         raise ValueError(f"Working directory does not exist: {working_dir}")
 
-    return ClaudeExecutor(
-        working_dir=working_dir,
-        timeout=timeout,
-    )
+    return ClaudeExecutor(working_dir=working_dir)

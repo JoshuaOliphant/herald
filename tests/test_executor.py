@@ -280,8 +280,3 @@ class TestCreateExecutor:
         """Should raise ValueError when working_dir doesn't exist."""
         with pytest.raises(ValueError, match="Working directory does not exist"):
             create_executor(working_dir=tmp_path / "nonexistent")
-
-    def test_create_with_custom_timeout(self, tmp_path):
-        """Should accept custom timeout."""
-        executor = create_executor(working_dir=tmp_path, timeout=600)
-        assert executor.timeout == 600

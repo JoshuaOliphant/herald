@@ -184,10 +184,7 @@ def create_app(settings: Settings) -> FastAPI:
     async def lifespan(app: FastAPI):
         nonlocal handler
         # Startup
-        executor = create_executor(
-            working_dir=settings.second_brain_path,
-            timeout=settings.command_timeout,
-        )
+        executor = create_executor(working_dir=settings.second_brain_path)
         handler = WebhookHandler(settings, executor)
         await handler.start()
         logger.info("Herald started successfully")
