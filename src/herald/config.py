@@ -22,10 +22,8 @@ class Settings(BaseSettings):
     telegram_bot_token: str
     allowed_telegram_user_ids: list[int] = []
 
-    # Paths
-    second_brain_path: Path = (
-        Path.home() / "Library/CloudStorage/Dropbox/python_workspace/second_brain"
-    )
+    # Paths (override with SECOND_BRAIN_PATH env var)
+    second_brain_path: Path = Path.home() / "second-brain"
     memory_path: Path | None = None  # Relative to second_brain_path if set
     heartbeat_file: Path | None = None  # Path to HEARTBEAT.md file
 
@@ -69,8 +67,8 @@ class Settings(BaseSettings):
     @property
     def webhook_url(self) -> str:
         """Full webhook URL for Telegram registration."""
-        # This will be set externally based on Tailscale Funnel URL
-        return f"https://your-mac.ts.net{self.webhook_path}"
+        # Override with your actual domain (e.g., Tailscale Funnel, ngrok, etc.)
+        return f"https://localhost:{self.port}{self.webhook_path}"
 
     def validate_ready(self) -> list[str]:
         """Check if all required settings are configured. Returns list of errors."""
