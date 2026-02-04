@@ -81,11 +81,7 @@ class WebhookHandler:
         # Extract sender info
         from_user = message.get("from", {})
         user_id = from_user.get("id")
-        display_name = (
-            from_user.get("first_name")
-            or from_user.get("username")
-            or "unknown"
-        )
+        display_name = from_user.get("first_name") or from_user.get("username") or "unknown"
         chat_id = message.get("chat", {}).get("id")
         text = message.get("text", "")
 

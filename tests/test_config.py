@@ -38,10 +38,14 @@ class TestSettings:
 
     def test_validate_ready_missing_token(self):
         """Validation should fail when token is missing."""
-        with patch.dict(os.environ, {
-            "TELEGRAM_BOT_TOKEN": "",
-            "ALLOWED_TELEGRAM_USER_IDS": "123",
-        }, clear=True):
+        with patch.dict(
+            os.environ,
+            {
+                "TELEGRAM_BOT_TOKEN": "",
+                "ALLOWED_TELEGRAM_USER_IDS": "123",
+            },
+            clear=True,
+        ):
             settings = Settings(
                 telegram_bot_token="",
                 allowed_telegram_user_ids=[123],

@@ -21,9 +21,9 @@ logger = logging.getLogger(__name__)
 # Priority order: most actionable first
 # Each tuple: (filename, budget_ratio)
 MEMORY_FILES_PRIORITY = [
-    ("pending.md", 0.3),      # 30% - actionable items
-    ("learnings.md", 0.4),    # 40% - service knowledge
-    ("observations.md", 0.3), # 30% - preferences
+    ("pending.md", 0.3),  # 30% - actionable items
+    ("learnings.md", 0.4),  # 40% - service knowledge
+    ("observations.md", 0.3),  # 30% - preferences
 ]
 MAX_MEMORY_CHARS = 10000
 

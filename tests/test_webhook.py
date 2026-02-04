@@ -25,10 +25,12 @@ def mock_settings():
 def mock_executor():
     """Create mock executor for testing."""
     executor = MagicMock(spec=ClaudeExecutor)
-    executor.execute = AsyncMock(return_value=ExecutionResult(
-        success=True,
-        output="Test response",
-    ))
+    executor.execute = AsyncMock(
+        return_value=ExecutionResult(
+            success=True,
+            output="Test response",
+        )
+    )
     executor.reset_chat = AsyncMock()
     executor.shutdown = AsyncMock()
     return executor

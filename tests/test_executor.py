@@ -354,9 +354,9 @@ class TestMemoryLoading:
         memory_dir = tmp_path / "memory"
         memory_dir.mkdir()
         # Each file gets ~30-40% of 10K = 3-4K chars
-        (memory_dir / "pending.md").write_text("p" * 5000)     # Exceeds 30% budget
-        (memory_dir / "learnings.md").write_text("l" * 5000)   # Exceeds 40% budget
-        (memory_dir / "observations.md").write_text("o" * 5000) # Exceeds 30% budget
+        (memory_dir / "pending.md").write_text("p" * 5000)  # Exceeds 30% budget
+        (memory_dir / "learnings.md").write_text("l" * 5000)  # Exceeds 40% budget
+        (memory_dir / "observations.md").write_text("o" * 5000)  # Exceeds 30% budget
 
         executor = ClaudeExecutor(working_dir=tmp_path, memory_path=memory_dir)
         context = executor._load_memory_context()
