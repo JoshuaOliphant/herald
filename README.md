@@ -118,7 +118,7 @@ uv run ruff check src tests
 
 ## Roadmap
 
-- [ ] Heartbeat system (proactive check-ins)
+- [X] Heartbeat system (proactive check-ins)
 - [ ] Voice message support
 - [ ] Image/document handling
 - [ ] Telegram approval for dangerous commands

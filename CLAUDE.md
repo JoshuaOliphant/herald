@@ -55,3 +55,5 @@ uv run pyright src
 - **Skill**: `~/.claude/skills/herald/SKILL.md` - Telegram response behavior
 - **Memory**: `second_brain/areas/herald/` - Herald's persistent learnings
 - **Second Brain**: `~/Dropbox/python_workspace/second_brain/` - Working directory for Claude Code
+
+@AGENTS.md
