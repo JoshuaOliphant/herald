@@ -24,6 +24,14 @@ class Settings(BaseSettings):
     second_brain_path: Path = (
         Path.home() / "Library/CloudStorage/Dropbox/python_workspace/second_brain"
     )
+    memory_path: Path | None = None  # Relative to second_brain_path if set
+
+    @property
+    def herald_memory_path(self) -> Path:
+        """Path to Herald's memory files."""
+        if self.memory_path:
+            return self.second_brain_path / self.memory_path
+        return self.second_brain_path / "areas" / "herald"
 
     # Server settings
     host: str = "0.0.0.0"

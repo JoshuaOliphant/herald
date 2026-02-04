@@ -79,3 +79,26 @@ class TestSettings:
         )
         errors = settings.validate_ready()
         assert errors == []
+
+
+class TestHeraldMemoryPath:
+    """Tests for herald_memory_path property."""
+
+    def test_default_memory_path(self, tmp_path):
+        """Should default to areas/herald under second_brain_path."""
+        settings = Settings(
+            telegram_bot_token="test_token",
+            allowed_telegram_user_ids=[123],
+            second_brain_path=tmp_path,
+        )
+        assert settings.herald_memory_path == tmp_path / "areas" / "herald"
+
+    def test_custom_memory_path(self, tmp_path):
+        """Should use custom memory_path relative to second_brain_path."""
+        settings = Settings(
+            telegram_bot_token="test_token",
+            allowed_telegram_user_ids=[123],
+            second_brain_path=tmp_path,
+            memory_path=Path("custom/memory"),
+        )
+        assert settings.herald_memory_path == tmp_path / "custom" / "memory"

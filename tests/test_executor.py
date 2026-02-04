@@ -280,3 +280,173 @@ class TestCreateExecutor:
         """Should raise ValueError when working_dir doesn't exist."""
         with pytest.raises(ValueError, match="Working directory does not exist"):
             create_executor(working_dir=tmp_path / "nonexistent")
+
+    def test_create_with_memory_path(self, tmp_path):
+        """Should accept optional memory_path parameter."""
+        memory_dir = tmp_path / "memory"
+        memory_dir.mkdir()
+        executor = create_executor(working_dir=tmp_path, memory_path=memory_dir)
+        assert executor.memory_path == memory_dir
+
+
+class TestMemoryLoading:
+    """Tests for memory file loading and context building."""
+
+    def test_load_memory_context_with_files(self, tmp_path):
+        """Should load and format memory files."""
+        memory_dir = tmp_path / "memory"
+        memory_dir.mkdir()
+        (memory_dir / "observations.md").write_text("La Boeuf prefers short responses")
+        (memory_dir / "learnings.md").write_text("Keep it under 500 chars")
+
+        executor = ClaudeExecutor(working_dir=tmp_path, memory_path=memory_dir)
+        context = executor._load_memory_context()
+
+        assert "# Herald Memory" in context
+        assert "## Observations" in context
+        assert "La Boeuf prefers short responses" in context
+        assert "## Learnings" in context
+
+    def test_load_memory_context_missing_dir(self, tmp_path):
+        """Should return empty string if memory path doesn't exist."""
+        executor = ClaudeExecutor(working_dir=tmp_path, memory_path=tmp_path / "nonexistent")
+        assert executor._load_memory_context() == ""
+
+    def test_load_memory_context_no_memory_path(self, tmp_path):
+        """Should return empty string if no memory path configured."""
+        executor = ClaudeExecutor(working_dir=tmp_path, memory_path=None)
+        assert executor._load_memory_context() == ""
+
+    def test_load_memory_respects_priority_order(self, tmp_path):
+        """Should load pending before learnings before observations."""
+        memory_dir = tmp_path / "memory"
+        memory_dir.mkdir()
+        (memory_dir / "pending.md").write_text("ACTION: Do this")
+        (memory_dir / "learnings.md").write_text("LEARNING: Know this")
+        (memory_dir / "observations.md").write_text("OBSERVATION: Notice this")
+
+        executor = ClaudeExecutor(working_dir=tmp_path, memory_path=memory_dir)
+        context = executor._load_memory_context()
+
+        # Pending should appear before Learnings, which should appear before Observations
+        pending_pos = context.find("ACTION: Do this")
+        learnings_pos = context.find("LEARNING: Know this")
+        observations_pos = context.find("OBSERVATION: Notice this")
+
+        assert pending_pos < learnings_pos < observations_pos
+
+    def test_smart_truncate_preserves_structure(self, tmp_path):
+        """Should preserve line boundaries when truncating."""
+        memory_dir = tmp_path / "memory"
+        memory_dir.mkdir()
+        # Create content that exceeds the 30% budget for observations (~3000 chars)
+        content = "# Header\n\n" + "x" * 5000 + "\n\n# Another Header\n\n" + "y" * 5000
+        (memory_dir / "observations.md").write_text(content)
+
+        executor = ClaudeExecutor(working_dir=tmp_path, memory_path=memory_dir)
+        context = executor._load_memory_context()
+
+        # Should have truncation indicator
+        assert "truncated" in context.lower()
+
+    def test_load_memory_allocates_budget_per_file(self, tmp_path):
+        """Each file should get its budget allocation."""
+        memory_dir = tmp_path / "memory"
+        memory_dir.mkdir()
+        # Each file gets ~30-40% of 10K = 3-4K chars
+        (memory_dir / "pending.md").write_text("p" * 5000)     # Exceeds 30% budget
+        (memory_dir / "learnings.md").write_text("l" * 5000)   # Exceeds 40% budget
+        (memory_dir / "observations.md").write_text("o" * 5000) # Exceeds 30% budget
+
+        executor = ClaudeExecutor(working_dir=tmp_path, memory_path=memory_dir)
+        context = executor._load_memory_context()
+
+        # Total should be under MAX_MEMORY_CHARS (10K) + overhead for headers
+        assert len(context) <= 10500  # Allow some overhead for headers
+
+    def test_load_memory_skips_empty_files(self, tmp_path):
+        """Should skip files that are empty or whitespace only."""
+        memory_dir = tmp_path / "memory"
+        memory_dir.mkdir()
+        (memory_dir / "pending.md").write_text("   \n\n  ")  # Whitespace only
+        (memory_dir / "learnings.md").write_text("Actual content")
+
+        executor = ClaudeExecutor(working_dir=tmp_path, memory_path=memory_dir)
+        context = executor._load_memory_context()
+
+        assert "## Pending" not in context
+        assert "## Learnings" in context
+        assert "Actual content" in context
+
+    def test_load_memory_handles_missing_files_gracefully(self, tmp_path):
+        """Should handle missing individual files gracefully."""
+        memory_dir = tmp_path / "memory"
+        memory_dir.mkdir()
+        # Only create one file, others don't exist
+        (memory_dir / "learnings.md").write_text("Some learnings")
+
+        executor = ClaudeExecutor(working_dir=tmp_path, memory_path=memory_dir)
+        context = executor._load_memory_context()
+
+        assert "# Herald Memory" in context
+        assert "## Learnings" in context
+        assert "Some learnings" in context
+        # Should not crash or include non-existent files
+        assert "## Pending" not in context
+        assert "## Observations" not in context
+
+
+class TestSmartTruncate:
+    """Tests for the _smart_truncate helper method."""
+
+    def test_no_truncation_when_under_limit(self, tmp_path):
+        """Should return content unchanged if under limit."""
+        executor = ClaudeExecutor(working_dir=tmp_path, memory_path=None)
+        content = "Short content"
+        result = executor._smart_truncate(content, max_chars=1000)
+        assert result == content
+
+    def test_truncates_at_line_boundary(self, tmp_path):
+        """Should truncate at line boundaries, not mid-line."""
+        executor = ClaudeExecutor(working_dir=tmp_path, memory_path=None)
+        content = "Line 1\nLine 2\nLine 3\nLine 4\nLine 5"
+        result = executor._smart_truncate(content, max_chars=20)
+
+        # Should not cut mid-line
+        assert not result.endswith("Li")
+        assert "truncated" in result.lower()
+
+    def test_truncation_indicator_added(self, tmp_path):
+        """Should add truncation indicator when content is cut."""
+        executor = ClaudeExecutor(working_dir=tmp_path, memory_path=None)
+        content = "x" * 1000
+        result = executor._smart_truncate(content, max_chars=100)
+
+        assert "[...content truncated...]" in result
+
+
+class TestSystemPromptInjection:
+    """Tests for memory injection into system prompt."""
+
+    def test_get_options_without_memory(self, tmp_path):
+        """Should return basic options when no memory configured."""
+        executor = ClaudeExecutor(working_dir=tmp_path, memory_path=None)
+        options = executor._get_options()
+
+        # Should use preset without append
+        assert options.system_prompt == {"type": "preset", "preset": "claude_code"}
+
+    def test_get_options_with_memory(self, tmp_path):
+        """Should append memory context to system prompt."""
+        memory_dir = tmp_path / "memory"
+        memory_dir.mkdir()
+        (memory_dir / "observations.md").write_text("Test observation")
+
+        executor = ClaudeExecutor(working_dir=tmp_path, memory_path=memory_dir)
+        options = executor._get_options()
+
+        # Should use preset with append
+        assert options.system_prompt["type"] == "preset"
+        assert options.system_prompt["preset"] == "claude_code"
+        assert "# Herald Memory" in options.system_prompt["append"]
+        assert "Test observation" in options.system_prompt["append"]
