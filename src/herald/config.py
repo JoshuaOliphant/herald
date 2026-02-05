@@ -31,6 +31,7 @@ class Settings(BaseSettings):
     heartbeat_enabled: bool = False
     heartbeat_every: str = "30m"
     heartbeat_prompt: str | None = None
+    heartbeat_prompt_file: Path | None = None  # Load prompt from file (overrides heartbeat_prompt)
     heartbeat_target: str = "last"
     heartbeat_active_hours: str | None = None
     heartbeat_ack_max_chars: int = 300
@@ -87,10 +88,15 @@ class Settings(BaseSettings):
 
     def get_heartbeat_config(self) -> HeartbeatConfig:
         """Build HeartbeatConfig from environment settings."""
+        # Load prompt from file if specified, otherwise use inline prompt
+        prompt = self.heartbeat_prompt
+        if self.heartbeat_prompt_file and self.heartbeat_prompt_file.exists():
+            prompt = self.heartbeat_prompt_file.read_text().strip()
+
         return HeartbeatConfig(
             enabled=self.heartbeat_enabled,
             every=self.heartbeat_every,
-            prompt=self.heartbeat_prompt,
+            prompt=prompt,
             target=self.heartbeat_target,
             active_hours=self.heartbeat_active_hours,
             ack_max_chars=self.heartbeat_ack_max_chars,
