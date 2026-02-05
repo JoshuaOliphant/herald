@@ -13,11 +13,12 @@ from herald.heartbeat.reader import read_heartbeat_file
 logger = logging.getLogger(__name__)
 
 # Default prompt when no custom prompt is configured
-DEFAULT_HEARTBEAT_PROMPT = """You are performing a periodic health check. Review the current state of the project and any items needing attention.
+DEFAULT_HEARTBEAT_PROMPT = """You are performing a periodic health check.
+Review the current state and any items needing attention.
 
-If everything is OK and no alerts are needed, start your response with HEARTBEAT_OK.
+If everything is OK and no alerts are needed, start with HEARTBEAT_OK.
 
-If there are issues requiring attention, describe them clearly without the HEARTBEAT_OK marker."""
+If there are issues requiring attention, describe them clearly."""
 
 
 @dataclass

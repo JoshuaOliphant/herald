@@ -1,17 +1,19 @@
-# ABOUTME: FastAPI webhook handler for Telegram updates with heartbeat integration
-# ABOUTME: Receives messages, validates users, routes to Claude Code, and manages periodic health checks
+# ABOUTME: FastAPI webhook handler for Telegram updates with heartbeat
+# ABOUTME: Receives messages, validates users, routes to Claude Code
 
 import asyncio
 import logging
 from collections import OrderedDict
 from collections.abc import Callable
 from contextlib import asynccontextmanager
+from datetime import datetime
 from typing import Any
 
 import httpx
 from fastapi import FastAPI, HTTPException, Request
 from pydantic import BaseModel
 
+from .chat_history import ChatHistoryManager
 from .config import Settings
 from .executor import ClaudeExecutor, create_executor
 from .formatter import format_error, format_for_telegram
@@ -36,6 +38,7 @@ class WebhookHandler:
         settings: Settings,
         executor: ClaudeExecutor,
         on_activity: Callable[[int], None] | None = None,
+        chat_history: ChatHistoryManager | None = None,
     ):
         self.settings = settings
         self.executor = executor
@@ -44,6 +47,10 @@ class WebhookHandler:
         # Track processed update IDs to prevent duplicate processing from Telegram retries
         self._processed_updates: OrderedDict[int, bool] = OrderedDict()
         self._max_tracked_updates = 1000  # Limit memory usage
+        # Chat history manager (optional)
+        self._chat_history = chat_history or ChatHistoryManager(
+            base_path=settings.chat_history_path
+        )
 
     async def start(self) -> None:
         """Initialize async resources."""
@@ -109,6 +116,13 @@ class WebhookHandler:
         # Handle /reset command - clears conversation history
         if text.strip().lower() == "/reset":
             logger.info(f"Reset command from {display_name} ({user_id}) for chat {chat_id}")
+            # Log reset command to history
+            self._chat_history.save_message(
+                chat_id=chat_id,
+                sender="system",
+                message="/reset - Conversation reset requested",
+                timestamp=datetime.now(),
+            )
             await self.executor.reset_chat(chat_id)
             await self._send_message(chat_id, "🔄 Conversation reset. Starting fresh!")
             return
@@ -118,6 +132,15 @@ class WebhookHandler:
         # Track activity for heartbeat delivery targeting
         if self._on_activity and chat_id:
             self._on_activity(chat_id)
+
+        # Log user message to chat history
+        timestamp = datetime.now()
+        self._chat_history.save_message(
+            chat_id=chat_id,
+            sender="user",
+            message=text,
+            timestamp=timestamp,
+        )
 
         # Send typing indicator
         await self._send_chat_action(chat_id, "typing")
@@ -130,10 +153,26 @@ class WebhookHandler:
             messages = format_for_telegram(result.output)
             for msg in messages:
                 await self._send_message(chat_id, msg.text, parse_mode=msg.parse_mode)
+
+            # Log assistant response to chat history
+            self._chat_history.save_message(
+                chat_id=chat_id,
+                sender="assistant",
+                message=result.output,
+                timestamp=datetime.now(),
+            )
         else:
             # Send error message
             error_msg = format_error(result.error or "Unknown error")
             await self._send_message(chat_id, error_msg.text, parse_mode=error_msg.parse_mode)
+
+            # Log error to chat history
+            self._chat_history.save_message(
+                chat_id=chat_id,
+                sender="assistant",
+                message=f"[Error] {result.error or 'Unknown error'}",
+                timestamp=datetime.now(),
+            )
 
     def _is_user_allowed(self, user_id: int | None) -> bool:
         """Check if a user is in the allowed list."""
@@ -238,9 +277,7 @@ def create_app(settings: Settings) -> FastAPI:
         # Start heartbeat scheduler after handler is ready
         if heartbeat_scheduler:
             heartbeat_scheduler.start()
-            logger.info(
-                f"Heartbeat scheduler started (interval: {heartbeat_config.interval})"
-            )
+            logger.info(f"Heartbeat scheduler started (interval: {heartbeat_config.interval})")
 
         logger.info("Herald started successfully")
         yield

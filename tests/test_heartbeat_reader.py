@@ -4,8 +4,6 @@
 from pathlib import Path
 from textwrap import dedent
 
-import pytest
-
 from herald.heartbeat.reader import read_heartbeat_file
 
 

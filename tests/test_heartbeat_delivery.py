@@ -1,8 +1,9 @@
 # ABOUTME: Unit tests for heartbeat alert delivery to Telegram
 # ABOUTME: Tests target resolution ("last", specific chat, "none") and message sending
 
+from unittest.mock import AsyncMock
+
 import pytest
-from unittest.mock import AsyncMock, MagicMock
 
 from herald.heartbeat.delivery import HeartbeatDelivery
 from herald.heartbeat.executor import HeartbeatResult

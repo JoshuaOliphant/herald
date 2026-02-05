@@ -63,9 +63,7 @@ class HeartbeatScheduler:
 
         self._running = True
         self._task = asyncio.create_task(self._run_loop())
-        logger.info(
-            f"Heartbeat scheduler started with interval: {self.config.interval}"
-        )
+        logger.info(f"Heartbeat scheduler started with interval: {self.config.interval}")
 
     async def stop(self) -> None:
         """

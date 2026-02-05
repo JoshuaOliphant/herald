@@ -232,9 +232,7 @@ class TestHeartbeatSchedulerActiveHours:
         )
 
         # Mock is_within_active_hours to return False
-        with patch(
-            "herald.heartbeat.scheduler.is_within_active_hours", return_value=False
-        ):
+        with patch("herald.heartbeat.scheduler.is_within_active_hours", return_value=False):
             scheduler.start()
             await asyncio.sleep(0.1)
             await scheduler.stop()
@@ -261,9 +259,7 @@ class TestHeartbeatSchedulerActiveHours:
         )
 
         # Mock is_within_active_hours to return True
-        with patch(
-            "herald.heartbeat.scheduler.is_within_active_hours", return_value=True
-        ):
+        with patch("herald.heartbeat.scheduler.is_within_active_hours", return_value=True):
             scheduler.start()
             await asyncio.sleep(0.1)
             await scheduler.stop()

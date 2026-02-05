@@ -44,6 +44,11 @@ class Settings(BaseSettings):
             return self.second_brain_path / self.memory_path
         return self.second_brain_path / "areas" / "herald"
 
+    @property
+    def chat_history_path(self) -> Path:
+        """Path to chat history storage."""
+        return self.second_brain_path / "areas" / "herald" / "chat-history"
+
     # Server settings
     host: str = "0.0.0.0"
     port: int = 8080

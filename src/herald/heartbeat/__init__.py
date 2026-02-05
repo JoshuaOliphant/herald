@@ -1,5 +1,5 @@
 # ABOUTME: Heartbeat module for Herald - periodic health check monitoring
-# ABOUTME: Provides interval parsing, active hours, config, execution, scheduling, delivery, and response classification
+# ABOUTME: Interval parsing, active hours, config, execution, scheduling, delivery
 
 from herald.heartbeat.active_hours import is_within_active_hours
 from herald.heartbeat.classifier import HeartbeatResponse, classify_heartbeat_response

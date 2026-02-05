@@ -1,9 +1,9 @@
 # ABOUTME: Unit tests for HeartbeatExecutor
 # ABOUTME: Tests prompt building, HEARTBEAT.md inclusion, and response handling
 
-import pytest
-from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
 
 from herald.executor import ExecutionResult
 from herald.heartbeat.config import HeartbeatConfig
