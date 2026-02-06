@@ -93,10 +93,19 @@ class Settings(BaseSettings):
 
     def get_heartbeat_config(self) -> HeartbeatConfig:
         """Build HeartbeatConfig from environment settings."""
+        import logging
+        logger = logging.getLogger(__name__)
+
         # Load prompt from file if specified, otherwise use inline prompt
         prompt = self.heartbeat_prompt
-        if self.heartbeat_prompt_file and self.heartbeat_prompt_file.exists():
-            prompt = self.heartbeat_prompt_file.read_text().strip()
+        if self.heartbeat_prompt_file:
+            if self.heartbeat_prompt_file.exists():
+                prompt = self.heartbeat_prompt_file.read_text().strip()
+                logger.info(f"Loaded heartbeat prompt from {self.heartbeat_prompt_file} ({len(prompt)} chars)")
+            else:
+                logger.warning(f"Heartbeat prompt file not found: {self.heartbeat_prompt_file}")
+
+        logger.info(f"Heartbeat target: {self.heartbeat_target}")
 
         return HeartbeatConfig(
             enabled=self.heartbeat_enabled,

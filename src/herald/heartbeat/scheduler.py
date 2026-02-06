@@ -140,9 +140,9 @@ class HeartbeatScheduler:
                 logger.info("Heartbeat alert triggered, delivering...")
                 await self.on_alert(result)
             elif result.is_ok:
-                logger.debug("Heartbeat OK, no alert needed")
+                logger.info(f"Heartbeat OK (suppressed, {len(result.content)} chars)")
             else:
-                logger.debug(f"Heartbeat result (no delivery): {result.content[:100]}")
+                logger.info(f"Heartbeat complete (is_ok={result.is_ok}, should_deliver={result.should_deliver})")
 
         except Exception as e:
             logger.exception(f"Unexpected error in heartbeat execution: {e}")
