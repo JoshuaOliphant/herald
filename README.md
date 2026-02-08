@@ -70,16 +70,52 @@ curl "https://api.telegram.org/bot<YOUR_TOKEN>/setWebhook?url=https://<YOUR_MAC>
 
 ## Configuration Options
 
+### Core Settings
+
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
 | `TELEGRAM_BOT_TOKEN` | Yes | - | Bot token from @BotFather |
 | `ALLOWED_TELEGRAM_USER_IDS` | Yes | - | Comma-separated user IDs |
-| `SECOND_BRAIN_PATH` | No | `~/Dropbox/python_workspace/second_brain` | Path to second brain |
+| `SECOND_BRAIN_PATH` | No | `~/second-brain` | Path to second brain |
 | `CLAUDE_CODE_PATH` | No | Auto-detect | Path to Claude CLI |
 | `HOST` | No | `0.0.0.0` | Server bind address |
 | `PORT` | No | `8080` | Server port |
 | `WEBHOOK_PATH` | No | `/webhook` | Telegram webhook path |
 | `COMMAND_TIMEOUT` | No | `300` | Max execution time (seconds) |
+
+### Heartbeat Settings
+
+The heartbeat system sends periodic check-ins through Claude Code, allowing Herald to proactively surface reminders, stale projects, inbox items, and other useful information.
+
+| Variable | Required | Default | Description |
+|----------|----------|---------|-------------|
+| `HEARTBEAT_ENABLED` | No | `false` | Enable periodic heartbeat checks |
+| `HEARTBEAT_EVERY` | No | `30m` | Check interval (e.g., `15m`, `1h`, `2h30m`) |
+| `HEARTBEAT_PROMPT` | No | Built-in | Custom prompt for heartbeat checks |
+| `HEARTBEAT_PROMPT_FILE` | No | - | Load prompt from file (overrides `HEARTBEAT_PROMPT`) |
+| `HEARTBEAT_TARGET` | No | `last` | Where to deliver alerts: `last` (most recent chat), or a chat ID |
+| `HEARTBEAT_ACTIVE_HOURS` | No | - | Restrict to time window (e.g., `09:00-22:00`) |
+| `HEARTBEAT_ACK_MAX_CHARS` | No | `300` | Suppress "all clear" responses under this length |
+| `HEARTBEAT_MODEL` | No | - | Model override (e.g., `sonnet` for cheaper checks) |
+| `HEARTBEAT_FILE` | No | - | Path to a `HEARTBEAT.md` file injected into heartbeat context |
+
+#### Example Heartbeat Configuration
+
+```bash
+# Enable heartbeat with hourly checks during waking hours
+HEARTBEAT_ENABLED=true
+HEARTBEAT_EVERY=1h
+HEARTBEAT_ACTIVE_HOURS=08:00-22:00
+HEARTBEAT_TARGET=last
+HEARTBEAT_PROMPT_FILE=/path/to/heartbeat-prompt.md
+```
+
+#### How It Works
+
+1. **Periodic execution**: Every `HEARTBEAT_EVERY` interval, Herald runs a Claude Code session with the heartbeat prompt
+2. **HEARTBEAT_OK suppression**: If the agent responds with `HEARTBEAT_OK` (nothing to report), the message is suppressed
+3. **Alert delivery**: Meaningful findings are forwarded to the target Telegram chat
+4. **Active hours**: Checks only run during the configured time window (if set)
 
 ## Security
 
@@ -116,9 +152,32 @@ uv run ruff check src tests
 6. **Response Formatting**: Escapes for Telegram MarkdownV2, splits if needed
 7. **Send Response**: Posts back to Telegram chat
 
+## Features
+
+### Chat History Persistence
+
+Herald automatically persists all conversations to markdown files in your second brain:
+
+```
+areas/herald/chat-history/{chat_id}/YYYY-MM-DD.md
+```
+
+Each daily file contains timestamped user and assistant messages, making conversations searchable and reviewable.
+
+### Memory Priming
+
+On startup, Herald loads memory files from `areas/herald/` in your second brain with priority-based budget allocation:
+
+- `pending.md` (60% budget) - Pending tasks and follow-ups
+- `learnings.md` (40% budget) - Service knowledge and observations
+
+This gives the agent context about your preferences and pending items without consuming excessive context window.
+
 ## Roadmap
 
 - [X] Heartbeat system (proactive check-ins)
+- [X] Chat history persistence
+- [X] Memory priming from second brain
 - [ ] Voice message support
 - [ ] Image/document handling
 - [ ] Telegram approval for dangerous commands
