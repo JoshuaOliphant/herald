@@ -4,6 +4,7 @@
 import asyncio
 import contextlib
 import logging
+import time
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from pathlib import Path
@@ -15,7 +16,9 @@ from claude_agent_sdk import (
     ClaudeSDKClient,
     Message,
     ResultMessage,
+    SystemMessage,
     TextBlock,
+    ToolUseBlock,
 )
 
 logger = logging.getLogger(__name__)
@@ -152,7 +155,10 @@ class ClaudeExecutor:
         queries and agent teams (which produce multiple ResultMessages
         across lead idle/wake cycles).
         """
-        logger.info(f"Executing via SDK for chat {chat_id}: {prompt[:100]}...")
+        logger.info(
+            "[chat %d] Executing: %s", chat_id, prompt[:100]
+        )
+        start_time = time.monotonic()
 
         try:
             client = await self._get_client(chat_id)
@@ -160,6 +166,9 @@ class ClaudeExecutor:
 
             text_parts: list[str] = []
             last_result_text: str | None = None
+            result_count = 0
+            tool_count = 0
+            message_count = 0
 
             msg_iter = client.receive_messages().__aiter__()
             while True:
@@ -169,22 +178,70 @@ class ClaudeExecutor:
                         timeout=MESSAGE_IDLE_TIMEOUT,
                     )
                 except TimeoutError:
+                    logger.debug(
+                        "[chat %d] Stream idle for %ds, finishing",
+                        chat_id, MESSAGE_IDLE_TIMEOUT,
+                    )
                     break
                 if message is None:
                     break
+
+                message_count += 1
 
                 if isinstance(message, AssistantMessage):
                     for block in message.content:
                         if isinstance(block, TextBlock):
                             text_parts.append(block.text)
-                elif isinstance(message, ResultMessage) and message.result:
-                    last_result_text = message.result
+                            logger.info(
+                                "[chat %d] Assistant: %s",
+                                chat_id, block.text[:200],
+                            )
+                        elif isinstance(block, ToolUseBlock):
+                            tool_count += 1
+                            logger.info(
+                                "[chat %d] Tool #%d: %s",
+                                chat_id, tool_count, block.name,
+                            )
+                elif isinstance(message, ResultMessage):
+                    result_count += 1
+                    cost = (
+                        f"${message.total_cost_usd:.4f}"
+                        if message.total_cost_usd is not None
+                        else "n/a"
+                    )
+                    logger.info(
+                        "[chat %d] Result #%d: %d turns, "
+                        "cost=%s, %dms",
+                        chat_id,
+                        result_count,
+                        message.num_turns,
+                        cost,
+                        message.duration_ms,
+                    )
+                    if message.result:
+                        last_result_text = message.result
+                elif isinstance(message, SystemMessage):
+                    logger.debug(
+                        "[chat %d] System: %s",
+                        chat_id, message.subtype,
+                    )
 
+            elapsed = time.monotonic() - start_time
             # Prefer result text if available, otherwise combine text parts
             final_output = (
                 last_result_text
                 if last_result_text is not None
                 else "\n".join(text_parts)
+            )
+
+            logger.info(
+                "[chat %d] Complete: %d result(s), %d tool call(s), "
+                "%d message(s), %.1fs",
+                chat_id,
+                result_count,
+                tool_count,
+                message_count,
+                elapsed,
             )
 
             return ExecutionResult(
@@ -193,7 +250,11 @@ class ClaudeExecutor:
             )
 
         except Exception as e:
-            logger.exception("Unexpected error in Claude SDK execution")
+            elapsed = time.monotonic() - start_time
+            logger.exception(
+                "[chat %d] Error after %.1fs: %s",
+                chat_id, elapsed, e,
+            )
             # On error, remove the client so next request creates fresh one
             if chat_id in self._clients:
                 with contextlib.suppress(Exception):

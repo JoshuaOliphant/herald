@@ -111,8 +111,10 @@ class TestHeraldMemoryPath:
 class TestModelAndAgentTeamsSettings:
     """Tests for Claude model and agent teams configuration."""
 
-    def test_claude_model_defaults_to_none(self, tmp_path):
+    def test_claude_model_defaults_to_none(self, tmp_path, monkeypatch):
         """Model should default to None (use SDK default)."""
+        monkeypatch.chdir(tmp_path)  # Avoid loading .env from project root
+        monkeypatch.delenv("CLAUDE_MODEL", raising=False)
         settings = Settings(
             telegram_bot_token="test_token",
             allowed_telegram_user_ids=[123],
@@ -120,8 +122,10 @@ class TestModelAndAgentTeamsSettings:
         )
         assert settings.claude_model is None
 
-    def test_claude_model_from_constructor(self, tmp_path):
+    def test_claude_model_from_constructor(self, tmp_path, monkeypatch):
         """Model should be settable via constructor."""
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.delenv("CLAUDE_MODEL", raising=False)
         settings = Settings(
             telegram_bot_token="test_token",
             allowed_telegram_user_ids=[123],
@@ -130,8 +134,10 @@ class TestModelAndAgentTeamsSettings:
         )
         assert settings.claude_model == "claude-opus-4-6"
 
-    def test_agent_teams_defaults_to_false(self, tmp_path):
+    def test_agent_teams_defaults_to_false(self, tmp_path, monkeypatch):
         """Agent teams should be disabled by default."""
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.delenv("AGENT_TEAMS", raising=False)
         settings = Settings(
             telegram_bot_token="test_token",
             allowed_telegram_user_ids=[123],
@@ -139,8 +145,10 @@ class TestModelAndAgentTeamsSettings:
         )
         assert settings.agent_teams is False
 
-    def test_agent_teams_enabled(self, tmp_path):
+    def test_agent_teams_enabled(self, tmp_path, monkeypatch):
         """Agent teams should be settable via constructor."""
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.delenv("AGENT_TEAMS", raising=False)
         settings = Settings(
             telegram_bot_token="test_token",
             allowed_telegram_user_ids=[123],

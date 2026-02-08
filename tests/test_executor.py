@@ -1,10 +1,11 @@
 # ABOUTME: Tests for Herald Claude Code executor using Agent SDK
 # ABOUTME: Validates SDK client management and conversation continuity
 
+import logging
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from claude_agent_sdk import AssistantMessage, ResultMessage, TextBlock
+from claude_agent_sdk import AssistantMessage, ResultMessage, SystemMessage, TextBlock, ToolUseBlock
 
 from herald.executor import ClaudeExecutor, ExecutionResult, create_executor
 
@@ -39,10 +40,21 @@ def _make_assistant(*texts: str) -> MagicMock:
     return msg
 
 
-def _make_result(text: str | None = None) -> MagicMock:
-    """Create a mock ResultMessage with given result text."""
+def _make_result(
+    text: str | None = None,
+    num_turns: int = 1,
+    total_cost_usd: float = 0.01,
+    duration_ms: int = 1000,
+) -> MagicMock:
+    """Create a mock ResultMessage with given result text and metadata."""
     msg = MagicMock(spec=ResultMessage)
     msg.result = text
+    msg.num_turns = num_turns
+    msg.total_cost_usd = total_cost_usd
+    msg.duration_ms = duration_ms
+    msg.duration_api_ms = duration_ms
+    msg.is_error = False
+    msg.session_id = "test"
     return msg
 
 
@@ -483,3 +495,182 @@ class TestModelAndAgentTeamsConfig:
         )
         assert executor.model == "claude-opus-4-6"
         assert executor.agent_teams is True
+
+
+class TestExecutionLogging:
+    """Tests for executor logging during message consumption."""
+
+    @pytest.fixture
+    def executor(self, tmp_path):
+        """Create an executor with a valid working directory."""
+        return ClaudeExecutor(working_dir=tmp_path)
+
+    @pytest.mark.asyncio
+    async def test_logs_assistant_text_preview(self, executor, caplog):
+        """Should log a preview of assistant text messages."""
+        with patch("herald.executor.ClaudeSDKClient") as mock_client_class:
+            mock_client = AsyncMock()
+            mock_client.connect = AsyncMock()
+            mock_client.query = AsyncMock()
+
+            async def mock_receive():
+                yield _make_assistant("Here is my detailed analysis of the project")
+                yield _make_result("Done")
+
+            mock_client.receive_messages = mock_receive
+            mock_client_class.return_value = mock_client
+
+            with caplog.at_level(logging.INFO, logger="herald.executor"):
+                await executor.execute("Analyze", chat_id=100)
+
+            assert any("Here is my detailed analysis" in r.message for r in caplog.records)
+
+    @pytest.mark.asyncio
+    async def test_logs_tool_use(self, executor, caplog):
+        """Should log tool invocations with tool name."""
+        with patch("herald.executor.ClaudeSDKClient") as mock_client_class:
+            mock_client = AsyncMock()
+            mock_client.connect = AsyncMock()
+            mock_client.query = AsyncMock()
+
+            # Create an assistant message with a tool use block
+            tool_block = MagicMock(spec=ToolUseBlock)
+            tool_block.id = "tool_123"
+            tool_block.name = "Read"
+            tool_block.input = {"file_path": "/tmp/test.py"}
+
+            assistant_with_tool = MagicMock(spec=AssistantMessage)
+            assistant_with_tool.content = [tool_block]
+
+            async def mock_receive():
+                yield assistant_with_tool
+                yield _make_result("File contents here")
+
+            mock_client.receive_messages = mock_receive
+            mock_client_class.return_value = mock_client
+
+            with caplog.at_level(logging.INFO, logger="herald.executor"):
+                await executor.execute("Read file", chat_id=100)
+
+            assert any("Read" in r.message and "tool" in r.message.lower() for r in caplog.records)
+
+    @pytest.mark.asyncio
+    async def test_logs_result_with_metadata(self, executor, caplog):
+        """Should log ResultMessage with cost and turn count."""
+        with patch("herald.executor.ClaudeSDKClient") as mock_client_class:
+            mock_client = AsyncMock()
+            mock_client.connect = AsyncMock()
+            mock_client.query = AsyncMock()
+
+            result_msg = MagicMock(spec=ResultMessage)
+            result_msg.result = "Final answer"
+            result_msg.num_turns = 5
+            result_msg.total_cost_usd = 0.1234
+            result_msg.duration_ms = 15000
+            result_msg.duration_api_ms = 12000
+            result_msg.is_error = False
+            result_msg.session_id = "sess_1"
+
+            async def mock_receive():
+                yield result_msg
+
+            mock_client.receive_messages = mock_receive
+            mock_client_class.return_value = mock_client
+
+            with caplog.at_level(logging.INFO, logger="herald.executor"):
+                await executor.execute("Hello", chat_id=100)
+
+            # Should log cost and turns
+            assert any("$0.1234" in r.message for r in caplog.records)
+            assert any("5 turn" in r.message for r in caplog.records)
+
+    @pytest.mark.asyncio
+    async def test_logs_completion_summary(self, executor, caplog):
+        """Should log a summary when execution completes."""
+        with patch("herald.executor.ClaudeSDKClient") as mock_client_class:
+            mock_client = AsyncMock()
+            mock_client.connect = AsyncMock()
+            mock_client.query = AsyncMock()
+
+            async def mock_receive():
+                yield _make_assistant("Thinking...")
+                yield _make_assistant("Here you go")
+                yield _make_result("Answer")
+
+            mock_client.receive_messages = mock_receive
+            mock_client_class.return_value = mock_client
+
+            with caplog.at_level(logging.INFO, logger="herald.executor"):
+                await executor.execute("Question", chat_id=100)
+
+            # Should have a completion summary with message count
+            assert any("complete" in r.message.lower() for r in caplog.records)
+
+    @pytest.mark.asyncio
+    async def test_logs_multiple_results_for_agent_teams(self, executor, caplog):
+        """Should log each ResultMessage separately in agent team scenarios."""
+        with patch("herald.executor.ClaudeSDKClient") as mock_client_class:
+            mock_client = AsyncMock()
+            mock_client.connect = AsyncMock()
+            mock_client.query = AsyncMock()
+
+            result1 = MagicMock(spec=ResultMessage)
+            result1.result = "Team spawned"
+            result1.num_turns = 3
+            result1.total_cost_usd = 0.50
+            result1.duration_ms = 20000
+            result1.duration_api_ms = 18000
+            result1.is_error = False
+            result1.session_id = "s1"
+
+            result2 = MagicMock(spec=ResultMessage)
+            result2.result = "Final synthesis"
+            result2.num_turns = 8
+            result2.total_cost_usd = 0.95
+            result2.duration_ms = 45000
+            result2.duration_api_ms = 40000
+            result2.is_error = False
+            result2.session_id = "s1"
+
+            async def mock_receive():
+                yield _make_assistant("Creating team...")
+                yield result1
+                yield _make_assistant("Reports in...")
+                yield result2
+
+            mock_client.receive_messages = mock_receive
+            mock_client_class.return_value = mock_client
+
+            with caplog.at_level(logging.INFO, logger="herald.executor"):
+                await executor.execute("Review", chat_id=100)
+
+            # Should log both results with numbered labels
+            result_logs = [
+                r for r in caplog.records
+                if "result" in r.message.lower() and "#" in r.message
+            ]
+            assert len(result_logs) >= 2
+
+    @pytest.mark.asyncio
+    async def test_logs_system_messages(self, executor, caplog):
+        """Should log system messages at debug level."""
+        with patch("herald.executor.ClaudeSDKClient") as mock_client_class:
+            mock_client = AsyncMock()
+            mock_client.connect = AsyncMock()
+            mock_client.query = AsyncMock()
+
+            sys_msg = MagicMock(spec=SystemMessage)
+            sys_msg.subtype = "init"
+            sys_msg.data = {}
+
+            async def mock_receive():
+                yield sys_msg
+                yield _make_result("Done")
+
+            mock_client.receive_messages = mock_receive
+            mock_client_class.return_value = mock_client
+
+            with caplog.at_level(logging.DEBUG, logger="herald.executor"):
+                await executor.execute("Hello", chat_id=100)
+
+            assert any("init" in r.message for r in caplog.records)
