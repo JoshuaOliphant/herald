@@ -1,6 +1,7 @@
 # ABOUTME: Tests for Herald Claude Code executor using Agent SDK
 # ABOUTME: Validates SDK client management and conversation continuity
 
+import asyncio
 import logging
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -650,6 +651,36 @@ class TestExecutionLogging:
                 if "result" in r.message.lower() and "#" in r.message
             ]
             assert len(result_logs) >= 2
+
+    @pytest.mark.asyncio
+    async def test_logs_warning_on_timeout_with_no_results(
+        self, executor, caplog,
+    ):
+        """Should log warning when stream times out before any ResultMessage."""
+        with (
+            patch("herald.executor.ClaudeSDKClient") as mock_client_class,
+            patch("herald.executor.MESSAGE_IDLE_TIMEOUT", 0.01),
+        ):
+            mock_client = AsyncMock()
+            mock_client.connect = AsyncMock()
+            mock_client.query = AsyncMock()
+
+            async def mock_receive():
+                yield _make_assistant("Scanning files...")
+                # Hang to trigger timeout — no ResultMessage
+                await asyncio.sleep(10)
+
+            mock_client.receive_messages = mock_receive
+            mock_client_class.return_value = mock_client
+
+            with caplog.at_level(logging.WARNING, logger="herald.executor"):
+                await executor.execute("Do research", chat_id=100)
+
+            assert any(
+                "timed out" in r.message.lower()
+                and r.levelno >= logging.WARNING
+                for r in caplog.records
+            )
 
     @pytest.mark.asyncio
     async def test_logs_system_messages(self, executor, caplog):

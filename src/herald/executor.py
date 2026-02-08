@@ -25,7 +25,9 @@ logger = logging.getLogger(__name__)
 
 # After the last message, wait this long for more before considering done.
 # Agent teams produce multiple ResultMessages with gaps between them.
-MESSAGE_IDLE_TIMEOUT = 30.0
+# Heavy research tasks (reading 50+ files) need time to compose a response,
+# so this must be generous enough for the API call to complete.
+MESSAGE_IDLE_TIMEOUT = 120.0
 
 # Only stream AssistantMessage text to the callback when it exceeds this length.
 # Filters out short status messages ("Let me check...") while forwarding
@@ -182,6 +184,7 @@ class ClaudeExecutor:
             result_count = 0
             tool_count = 0
             message_count = 0
+            timed_out = False
 
             msg_iter = client.receive_messages().__aiter__()
             while True:
@@ -191,10 +194,7 @@ class ClaudeExecutor:
                         timeout=MESSAGE_IDLE_TIMEOUT,
                     )
                 except TimeoutError:
-                    logger.debug(
-                        "[chat %d] Stream idle for %ds, finishing",
-                        chat_id, MESSAGE_IDLE_TIMEOUT,
-                    )
+                    timed_out = True
                     break
                 if message is None:
                     break
@@ -248,6 +248,15 @@ class ClaudeExecutor:
                     )
 
             elapsed = time.monotonic() - start_time
+
+            if timed_out and result_count == 0:
+                logger.warning(
+                    "[chat %d] Timed out after %.1fs with no "
+                    "ResultMessage (%d tool calls). Claude may "
+                    "have been composing a long response.",
+                    chat_id, elapsed, tool_count,
+                )
+
             # Prefer result text if available, otherwise combine text parts
             final_output = (
                 last_result_text
