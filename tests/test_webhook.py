@@ -169,8 +169,11 @@ class TestWebhookHandlerAsync:
 
         await handler.handle_update(update)
 
-        # Should execute the prompt with chat_id
-        mock_executor.execute.assert_called_once_with("What's on my todo list?", 12345)
+        # Should execute the prompt with chat_id (plus streaming callback)
+        mock_executor.execute.assert_called_once()
+        call_args = mock_executor.execute.call_args
+        assert call_args.args == ("What's on my todo list?", 12345)
+        assert "on_assistant_text" in call_args.kwargs
         # Should send the response
         assert handler._http_client.post.call_count >= 1
 
@@ -230,6 +233,141 @@ class TestWebhookHandlerAsync:
 
         mock_executor.shutdown.assert_called_once()
         mock_http_client.aclose.assert_called_once()
+
+    async def test_handle_update_streams_intermediate_text(self, mock_settings, mock_executor):
+        """Substantive intermediate text should be sent to Telegram as it arrives."""
+        handler = WebhookHandler(mock_settings, mock_executor)
+        handler._http_client = AsyncMock()
+        handler._http_client.post = AsyncMock(return_value=MagicMock(status_code=200))
+
+        # Make executor.execute call the on_assistant_text callback
+        async def fake_execute(prompt, chat_id, on_assistant_text=None):
+            if on_assistant_text:
+                await on_assistant_text("Here are the detailed proposals " + "x" * 200)
+            return ExecutionResult(success=True, output="Final summary")
+
+        mock_executor.execute = AsyncMock(side_effect=fake_execute)
+
+        update = TelegramUpdate(
+            update_id=1,
+            message={
+                "from": {"id": 12345, "username": "laboeuf"},
+                "chat": {"id": 12345},
+                "text": "Do the tasks",
+            },
+        )
+
+        await handler.handle_update(update)
+
+        # Should have sent the intermediate text to Telegram
+        send_calls = handler._http_client.post.call_args_list
+        message_calls = [c for c in send_calls if "sendMessage" in str(c)]
+        assert any("proposals" in str(c) for c in message_calls)
+
+    async def test_handle_update_skips_final_when_streamed(self, mock_settings, mock_executor):
+        """When text was streamed via callback, should NOT re-send final output."""
+        handler = WebhookHandler(mock_settings, mock_executor)
+        handler._http_client = AsyncMock()
+        handler._http_client.post = AsyncMock(return_value=MagicMock(status_code=200))
+
+        async def fake_execute(prompt, chat_id, on_assistant_text=None):
+            if on_assistant_text:
+                await on_assistant_text("Detailed analysis " + "x" * 200)
+            return ExecutionResult(success=True, output="Same content repeated")
+
+        mock_executor.execute = AsyncMock(side_effect=fake_execute)
+
+        update = TelegramUpdate(
+            update_id=1,
+            message={
+                "from": {"id": 12345, "username": "laboeuf"},
+                "chat": {"id": 12345},
+                "text": "Analyze",
+            },
+        )
+
+        await handler.handle_update(update)
+
+        # Filter for sendMessage calls only
+        send_calls = handler._http_client.post.call_args_list
+        message_calls = [c for c in send_calls if "sendMessage" in str(c)]
+
+        # Should have the intermediate message but NOT "Same content repeated"
+        assert any("analysis" in str(c).lower() for c in message_calls)
+        assert not any("same content repeated" in str(c).lower() for c in message_calls)
+
+    async def test_handle_update_sends_final_when_not_streamed(self, mock_settings, mock_executor):
+        """When nothing was streamed, should send final output normally."""
+        handler = WebhookHandler(mock_settings, mock_executor)
+        handler._http_client = AsyncMock()
+        handler._http_client.post = AsyncMock(return_value=MagicMock(status_code=200))
+
+        # No callback invocation (simple/short response)
+        async def fake_execute(prompt, chat_id, on_assistant_text=None):
+            return ExecutionResult(success=True, output="Quick answer")
+
+        mock_executor.execute = AsyncMock(side_effect=fake_execute)
+
+        update = TelegramUpdate(
+            update_id=2,
+            message={
+                "from": {"id": 12345, "username": "laboeuf"},
+                "chat": {"id": 12345},
+                "text": "Quick question",
+            },
+        )
+
+        await handler.handle_update(update)
+
+        send_calls = handler._http_client.post.call_args_list
+        message_calls = [c for c in send_calls if "sendMessage" in str(c)]
+        assert any("quick answer" in str(c).lower() for c in message_calls)
+
+    async def test_handle_update_logs_streamed_to_history(
+        self, mock_settings, mock_executor,
+    ):
+        """Chat history should capture all streamed content, not just final output."""
+        handler = WebhookHandler(mock_settings, mock_executor)
+        handler._http_client = AsyncMock()
+        handler._http_client.post = AsyncMock(return_value=MagicMock(status_code=200))
+
+        chunk1 = "First proposal details " + "x" * 200
+        chunk2 = "Second analysis results " + "y" * 200
+
+        async def fake_execute(prompt, chat_id, on_assistant_text=None):
+            if on_assistant_text:
+                await on_assistant_text(chunk1)
+                await on_assistant_text(chunk2)
+            return ExecutionResult(success=True, output="Summary only")
+
+        mock_executor.execute = AsyncMock(side_effect=fake_execute)
+
+        # Mock chat history
+        handler._chat_history = MagicMock()
+        handler._chat_history.save_message = MagicMock()
+
+        update = TelegramUpdate(
+            update_id=3,
+            message={
+                "from": {"id": 12345, "username": "laboeuf"},
+                "chat": {"id": 12345},
+                "text": "Review everything",
+            },
+        )
+
+        await handler.handle_update(update)
+
+        # Find the assistant save_message call
+        assistant_calls = [
+            c for c in handler._chat_history.save_message.call_args_list
+            if c.kwargs.get("sender") == "assistant"
+            or (c.args and len(c.args) > 1 and c.args[1] == "assistant")
+        ]
+
+        # Chat history should contain the streamed content, not just "Summary only"
+        all_saved = str(assistant_calls)
+        assert "First proposal details" in all_saved
+        assert "Second analysis results" in all_saved
 
     async def test_deduplication_prevents_double_processing(self, mock_settings, mock_executor):
         """Same update ID should only be processed once."""

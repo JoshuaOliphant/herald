@@ -145,20 +145,37 @@ class WebhookHandler:
         # Send typing indicator
         await self._send_chat_action(chat_id, "typing")
 
-        # Execute through Claude Code (with chat_id for conversation continuity)
-        result = await self.executor.execute(text, chat_id)
+        # Stream substantive intermediate text to Telegram as it arrives
+        streamed_chunks: list[str] = []
 
-        if result.success:
-            # Format and send response
-            messages = format_for_telegram(result.output)
+        async def on_assistant_text(chunk: str) -> None:
+            streamed_chunks.append(chunk)
+            messages = format_for_telegram(chunk)
             for msg in messages:
                 await self._send_message(chat_id, msg.text, parse_mode=msg.parse_mode)
 
-            # Log assistant response to chat history
+        # Execute through Claude Code (with chat_id for conversation continuity)
+        result = await self.executor.execute(
+            text, chat_id, on_assistant_text=on_assistant_text,
+        )
+
+        if result.success:
+            if not streamed_chunks:
+                # Nothing was streamed — send final output normally
+                messages = format_for_telegram(result.output)
+                for msg in messages:
+                    await self._send_message(chat_id, msg.text, parse_mode=msg.parse_mode)
+
+            # Log to chat history: prefer streamed content for completeness
+            history_output = (
+                "\n\n".join(streamed_chunks)
+                if streamed_chunks
+                else result.output
+            )
             self._chat_history.save_message(
                 chat_id=chat_id,
                 sender="assistant",
-                message=result.output,
+                message=history_output,
                 timestamp=datetime.now(),
             )
         else:

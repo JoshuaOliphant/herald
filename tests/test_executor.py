@@ -674,3 +674,197 @@ class TestExecutionLogging:
                 await executor.execute("Hello", chat_id=100)
 
             assert any("init" in r.message for r in caplog.records)
+
+
+class TestStreamingCallback:
+    """Tests for on_assistant_text streaming callback during execution.
+
+    Only substantive text (above MIN_STREAM_LENGTH) is forwarded via callback.
+    Short status messages like "Let me check..." are filtered to avoid
+    bombarding the user with noise.
+    """
+
+    @pytest.fixture
+    def executor(self, tmp_path):
+        """Create an executor with a valid working directory."""
+        return ClaudeExecutor(working_dir=tmp_path)
+
+    def _long_text(self, prefix: str) -> str:
+        """Create text above MIN_STREAM_LENGTH threshold for testing."""
+        # Pad to 250 chars to be safely above the 200-char threshold
+        return prefix + " " + "x" * (250 - len(prefix) - 1)
+
+    @pytest.mark.asyncio
+    async def test_callback_called_for_substantive_text(self, executor):
+        """Should invoke callback for AssistantMessages above length threshold."""
+        with patch("herald.executor.ClaudeSDKClient") as mock_client_class:
+            mock_client = AsyncMock()
+            mock_client.connect = AsyncMock()
+            mock_client.query = AsyncMock()
+
+            proposal_text = self._long_text("Here are my proposals")
+            analysis_text = self._long_text("And the analysis")
+
+            async def mock_receive():
+                yield _make_assistant(proposal_text)
+                yield _make_assistant(analysis_text)
+                yield _make_result("Done")
+
+            mock_client.receive_messages = mock_receive
+            mock_client_class.return_value = mock_client
+
+            received: list[str] = []
+
+            async def on_text(text: str) -> None:
+                received.append(text)
+
+            await executor.execute("Review", chat_id=100, on_assistant_text=on_text)
+
+            assert received == [proposal_text, analysis_text]
+
+    @pytest.mark.asyncio
+    async def test_callback_filters_short_status_messages(self, executor):
+        """Should NOT invoke callback for short status messages."""
+        with patch("herald.executor.ClaudeSDKClient") as mock_client_class:
+            mock_client = AsyncMock()
+            mock_client.connect = AsyncMock()
+            mock_client.query = AsyncMock()
+
+            long_text = self._long_text("Here's the detailed proposal")
+
+            async def mock_receive():
+                yield _make_assistant("Let me check the files...")
+                yield _make_assistant("I'll read the README now")
+                yield _make_assistant(long_text)
+                yield _make_result("Done")
+
+            mock_client.receive_messages = mock_receive
+            mock_client_class.return_value = mock_client
+
+            received: list[str] = []
+
+            async def on_text(text: str) -> None:
+                received.append(text)
+
+            await executor.execute("Review", chat_id=100, on_assistant_text=on_text)
+
+            # Only the long substantive text should be streamed
+            assert len(received) == 1
+            assert received[0] == long_text
+
+    @pytest.mark.asyncio
+    async def test_callback_combines_multiple_text_blocks(self, executor):
+        """Should combine multiple TextBlocks from one message and check total length."""
+        with patch("herald.executor.ClaudeSDKClient") as mock_client_class:
+            mock_client = AsyncMock()
+            mock_client.connect = AsyncMock()
+            mock_client.query = AsyncMock()
+
+            # Two blocks that are short individually but long combined
+            block1 = MagicMock(spec=TextBlock)
+            block1.text = "x" * 120
+            block2 = MagicMock(spec=TextBlock)
+            block2.text = "y" * 120
+            msg = MagicMock(spec=AssistantMessage)
+            msg.content = [block1, block2]
+
+            async def mock_receive():
+                yield msg
+                yield _make_result("Done")
+
+            mock_client.receive_messages = mock_receive
+            mock_client_class.return_value = mock_client
+
+            received: list[str] = []
+
+            async def on_text(text: str) -> None:
+                received.append(text)
+
+            await executor.execute("Hello", chat_id=100, on_assistant_text=on_text)
+
+            # Combined length (240+) exceeds threshold, should be streamed
+            assert len(received) == 1
+            assert "x" * 120 in received[0]
+            assert "y" * 120 in received[0]
+
+    @pytest.mark.asyncio
+    async def test_callback_skips_tool_only_messages(self, executor):
+        """Should not invoke callback for AssistantMessages with only tool use."""
+        with patch("herald.executor.ClaudeSDKClient") as mock_client_class:
+            mock_client = AsyncMock()
+            mock_client.connect = AsyncMock()
+            mock_client.query = AsyncMock()
+
+            tool_block = MagicMock(spec=ToolUseBlock)
+            tool_block.id = "t1"
+            tool_block.name = "Read"
+            tool_block.input = {}
+            tool_msg = MagicMock(spec=AssistantMessage)
+            tool_msg.content = [tool_block]
+
+            async def mock_receive():
+                yield tool_msg
+                yield _make_result("File read")
+
+            mock_client.receive_messages = mock_receive
+            mock_client_class.return_value = mock_client
+
+            received: list[str] = []
+
+            async def on_text(text: str) -> None:
+                received.append(text)
+
+            await executor.execute("Read file", chat_id=100, on_assistant_text=on_text)
+
+            assert received == []
+
+    @pytest.mark.asyncio
+    async def test_execute_without_callback_still_works(self, executor):
+        """Should work normally when no callback is provided (backward compat)."""
+        with patch("herald.executor.ClaudeSDKClient") as mock_client_class:
+            mock_client = AsyncMock()
+            mock_client.connect = AsyncMock()
+            mock_client.query = AsyncMock()
+
+            async def mock_receive():
+                yield _make_assistant("Hello world")
+                yield _make_result("Done")
+
+            mock_client.receive_messages = mock_receive
+            mock_client_class.return_value = mock_client
+
+            # No on_assistant_text param — should not raise
+            result = await executor.execute("Hello", chat_id=100)
+
+            assert result.success is True
+            assert result.output == "Done"
+
+    @pytest.mark.asyncio
+    async def test_callback_called_between_multiple_results(self, executor):
+        """Should stream substantive text from agent teams across result cycles."""
+        with patch("herald.executor.ClaudeSDKClient") as mock_client_class:
+            mock_client = AsyncMock()
+            mock_client.connect = AsyncMock()
+            mock_client.query = AsyncMock()
+
+            long_text = self._long_text("Reports received, here's the full analysis")
+
+            async def mock_receive():
+                yield _make_assistant("Spawning team...")  # Short, filtered
+                yield _make_result("Team spawned")
+                yield _make_assistant(long_text)  # Long, streamed
+                yield _make_result("Final summary")
+
+            mock_client.receive_messages = mock_receive
+            mock_client_class.return_value = mock_client
+
+            received: list[str] = []
+
+            async def on_text(text: str) -> None:
+                received.append(text)
+
+            result = await executor.execute("Review", chat_id=100, on_assistant_text=on_text)
+
+            # Only the long text should be streamed, not "Spawning team..."
+            assert received == [long_text]
+            assert result.output == "Final summary"

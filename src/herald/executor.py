@@ -5,7 +5,7 @@ import asyncio
 import contextlib
 import logging
 import time
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -26,6 +26,11 @@ logger = logging.getLogger(__name__)
 # After the last message, wait this long for more before considering done.
 # Agent teams produce multiple ResultMessages with gaps between them.
 MESSAGE_IDLE_TIMEOUT = 30.0
+
+# Only stream AssistantMessage text to the callback when it exceeds this length.
+# Filters out short status messages ("Let me check...") while forwarding
+# substantive content (proposals, tables, analysis).
+MIN_STREAM_LENGTH = 200
 
 # Memory loading configuration
 # Priority order: most actionable first
@@ -147,13 +152,21 @@ class ClaudeExecutor:
             logger.info(f"Created new SDK client for chat {chat_id}")
         return self._clients[chat_id]
 
-    async def execute(self, prompt: str, chat_id: int) -> ExecutionResult:
+    async def execute(
+        self,
+        prompt: str,
+        chat_id: int,
+        on_assistant_text: Callable[[str], Awaitable[None]] | None = None,
+    ) -> ExecutionResult:
         """
         Execute a prompt through Claude Agent SDK.
 
         Uses receive_messages() with idle timeout to support both regular
         queries and agent teams (which produce multiple ResultMessages
         across lead idle/wake cycles).
+
+        If on_assistant_text is provided, substantive AssistantMessage text
+        (above MIN_STREAM_LENGTH) is forwarded via the callback as it arrives.
         """
         logger.info(
             "[chat %d] Executing: %s", chat_id, prompt[:100]
@@ -189,9 +202,11 @@ class ClaudeExecutor:
                 message_count += 1
 
                 if isinstance(message, AssistantMessage):
+                    msg_text_parts: list[str] = []
                     for block in message.content:
                         if isinstance(block, TextBlock):
                             text_parts.append(block.text)
+                            msg_text_parts.append(block.text)
                             logger.info(
                                 "[chat %d] Assistant: %s",
                                 chat_id, block.text[:200],
@@ -202,6 +217,12 @@ class ClaudeExecutor:
                                 "[chat %d] Tool #%d: %s",
                                 chat_id, tool_count, block.name,
                             )
+
+                    # Stream substantive text to callback
+                    if on_assistant_text and msg_text_parts:
+                        combined = "\n".join(msg_text_parts)
+                        if len(combined) >= MIN_STREAM_LENGTH:
+                            await on_assistant_text(combined)
                 elif isinstance(message, ResultMessage):
                     result_count += 1
                     cost = (
