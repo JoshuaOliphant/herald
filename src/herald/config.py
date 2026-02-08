@@ -27,6 +27,10 @@ class Settings(BaseSettings):
     memory_path: Path | None = None  # Relative to second_brain_path if set
     heartbeat_file: Path | None = None  # Path to HEARTBEAT.md file
 
+    # Claude model settings
+    claude_model: str | None = None  # Override default model (e.g., "claude-opus-4-6")
+    agent_teams: bool = False  # Enable experimental agent teams feature
+
     # Heartbeat settings
     heartbeat_enabled: bool = False
     heartbeat_every: str = "30m"

@@ -4,6 +4,7 @@
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from claude_agent_sdk import AssistantMessage, ResultMessage, TextBlock
 
 from herald.executor import ClaudeExecutor, ExecutionResult, create_executor
 
@@ -26,6 +27,25 @@ class TestExecutionResult:
         assert result.error == "Something broke"
 
 
+def _make_assistant(*texts: str) -> MagicMock:
+    """Create a mock AssistantMessage with given text blocks."""
+    blocks = []
+    for text in texts:
+        block = MagicMock(spec=TextBlock)
+        block.text = text
+        blocks.append(block)
+    msg = MagicMock(spec=AssistantMessage)
+    msg.content = blocks
+    return msg
+
+
+def _make_result(text: str | None = None) -> MagicMock:
+    """Create a mock ResultMessage with given result text."""
+    msg = MagicMock(spec=ResultMessage)
+    msg.result = text
+    return msg
+
+
 class TestClaudeExecutor:
     """Tests for ClaudeExecutor class with SDK mocking."""
 
@@ -34,49 +54,21 @@ class TestClaudeExecutor:
         """Create an executor with a valid working directory."""
         return ClaudeExecutor(working_dir=tmp_path)
 
-    @pytest.fixture
-    def mock_text_block(self):
-        """Create a mock TextBlock."""
-        block = MagicMock()
-        block.text = "Hello from Claude"
-        return block
-
-    @pytest.fixture
-    def mock_assistant_message(self, mock_text_block):
-        """Create a mock AssistantMessage."""
-        msg = MagicMock()
-        msg.content = [mock_text_block]
-        return msg
-
-    @pytest.fixture
-    def mock_result_message(self):
-        """Create a mock ResultMessage."""
-        msg = MagicMock()
-        msg.result = "Final answer"
-        return msg
-
     @pytest.mark.asyncio
     async def test_execute_creates_client_for_new_chat(self, executor):
         """Should create a new client for a chat that doesn't have one."""
         with patch("herald.executor.ClaudeSDKClient") as mock_client_class:
-            # Setup mock client
             mock_client = AsyncMock()
             mock_client.connect = AsyncMock()
             mock_client.query = AsyncMock()
 
-            # Mock receive_response to return a result message
-            mock_result = MagicMock()
-            mock_result.result = "Test response"
-
             async def mock_receive():
-                yield mock_result
+                yield _make_result("Test response")
 
-            mock_client.receive_response = mock_receive
+            mock_client.receive_messages = mock_receive
             mock_client_class.return_value = mock_client
 
-            # Patch isinstance checks
-            with patch("herald.executor.ResultMessage", type(mock_result)):
-                result = await executor.execute("Hello", chat_id=12345)
+            result = await executor.execute("Hello", chat_id=12345)
 
             assert result.success is True
             assert result.output == "Test response"
@@ -91,20 +83,16 @@ class TestClaudeExecutor:
             mock_client.connect = AsyncMock()
             mock_client.query = AsyncMock()
 
-            mock_result = MagicMock()
-            mock_result.result = "Response"
-
             async def mock_receive():
-                yield mock_result
+                yield _make_result("Response")
 
-            mock_client.receive_response = mock_receive
+            mock_client.receive_messages = mock_receive
             mock_client_class.return_value = mock_client
 
-            with patch("herald.executor.ResultMessage", type(mock_result)):
-                # First call
-                await executor.execute("First message", chat_id=12345)
-                # Second call to same chat
-                await executor.execute("Second message", chat_id=12345)
+            # First call
+            await executor.execute("First message", chat_id=12345)
+            # Second call to same chat
+            await executor.execute("Second message", chat_id=12345)
 
             # Client should only be created once
             assert mock_client_class.call_count == 1
@@ -120,19 +108,15 @@ class TestClaudeExecutor:
             mock_client.connect = AsyncMock()
             mock_client.query = AsyncMock()
 
-            mock_result = MagicMock()
-            mock_result.result = "Response"
-
             async def mock_receive():
-                yield mock_result
+                yield _make_result("Response")
 
-            mock_client.receive_response = mock_receive
+            mock_client.receive_messages = mock_receive
             mock_client_class.return_value = mock_client
 
-            with patch("herald.executor.ResultMessage", type(mock_result)):
-                # Calls to different chats
-                await executor.execute("Message 1", chat_id=11111)
-                await executor.execute("Message 2", chat_id=22222)
+            # Calls to different chats
+            await executor.execute("Message 1", chat_id=11111)
+            await executor.execute("Message 2", chat_id=22222)
 
             # Should create two separate clients
             assert mock_client_class.call_count == 2
@@ -140,35 +124,17 @@ class TestClaudeExecutor:
     @pytest.mark.asyncio
     async def test_execute_extracts_text_from_assistant_messages(self, executor):
         """Should extract text from AssistantMessage when no result."""
-        from claude_agent_sdk import AssistantMessage, ResultMessage, TextBlock
-
         with patch("herald.executor.ClaudeSDKClient") as mock_client_class:
             mock_client = AsyncMock()
             mock_client.connect = AsyncMock()
             mock_client.query = AsyncMock()
 
-            # Create real SDK message types for proper isinstance checks
-            mock_text_block = MagicMock(spec=TextBlock)
-            mock_text_block.text = "Hello "
-
-            mock_text_block2 = MagicMock(spec=TextBlock)
-            mock_text_block2.text = "world"
-
-            mock_assistant = MagicMock(spec=AssistantMessage)
-            mock_assistant.content = [mock_text_block]
-
-            mock_assistant2 = MagicMock(spec=AssistantMessage)
-            mock_assistant2.content = [mock_text_block2]
-
-            mock_result = MagicMock(spec=ResultMessage)
-            mock_result.result = None  # No result text
-
             async def mock_receive():
-                yield mock_assistant
-                yield mock_assistant2
-                yield mock_result
+                yield _make_assistant("Hello ")
+                yield _make_assistant("world")
+                yield _make_result(None)
 
-            mock_client.receive_response = mock_receive
+            mock_client.receive_messages = mock_receive
             mock_client_class.return_value = mock_client
 
             result = await executor.execute("Hello", chat_id=12345)
@@ -176,6 +142,28 @@ class TestClaudeExecutor:
             assert result.success is True
             assert "Hello" in result.output
             assert "world" in result.output
+
+    @pytest.mark.asyncio
+    async def test_execute_uses_last_result_from_multiple(self, executor):
+        """Should use the last ResultMessage when multiple are received (agent teams)."""
+        with patch("herald.executor.ClaudeSDKClient") as mock_client_class:
+            mock_client = AsyncMock()
+            mock_client.connect = AsyncMock()
+            mock_client.query = AsyncMock()
+
+            async def mock_receive():
+                yield _make_assistant("Creating team...")
+                yield _make_result("Team spawned, waiting for reports")
+                yield _make_assistant("Reports received, synthesizing...")
+                yield _make_result("Final team summary with all findings")
+
+            mock_client.receive_messages = mock_receive
+            mock_client_class.return_value = mock_client
+
+            result = await executor.execute("Review projects", chat_id=12345)
+
+            assert result.success is True
+            assert result.output == "Final team summary with all findings"
 
     @pytest.mark.asyncio
     async def test_reset_chat_disconnects_client(self, executor):
@@ -186,22 +174,18 @@ class TestClaudeExecutor:
             mock_client.disconnect = AsyncMock()
             mock_client.query = AsyncMock()
 
-            mock_result = MagicMock()
-            mock_result.result = "Response"
-
             async def mock_receive():
-                yield mock_result
+                yield _make_result("Response")
 
-            mock_client.receive_response = mock_receive
+            mock_client.receive_messages = mock_receive
             mock_client_class.return_value = mock_client
 
-            with patch("herald.executor.ResultMessage", type(mock_result)):
-                # Create a client
-                await executor.execute("Hello", chat_id=12345)
-                assert 12345 in executor._clients
+            # Create a client
+            await executor.execute("Hello", chat_id=12345)
+            assert 12345 in executor._clients
 
-                # Reset the chat
-                await executor.reset_chat(12345)
+            # Reset the chat
+            await executor.reset_chat(12345)
 
             mock_client.disconnect.assert_called_once()
             assert 12345 not in executor._clients
@@ -227,24 +211,20 @@ class TestClaudeExecutor:
             mock_client2.disconnect = AsyncMock()
             mock_client2.query = AsyncMock()
 
-            mock_result = MagicMock()
-            mock_result.result = "Response"
-
             async def mock_receive():
-                yield mock_result
+                yield _make_result("Response")
 
-            mock_client1.receive_response = mock_receive
-            mock_client2.receive_response = mock_receive
+            mock_client1.receive_messages = mock_receive
+            mock_client2.receive_messages = mock_receive
 
             # Return different clients for different calls
             mock_client_class.side_effect = [mock_client1, mock_client2]
 
-            with patch("herald.executor.ResultMessage", type(mock_result)):
-                await executor.execute("Hello", chat_id=11111)
-                await executor.execute("Hello", chat_id=22222)
+            await executor.execute("Hello", chat_id=11111)
+            await executor.execute("Hello", chat_id=22222)
 
-                # Shutdown
-                await executor.shutdown()
+            # Shutdown
+            await executor.shutdown()
 
             mock_client1.disconnect.assert_called_once()
             mock_client2.disconnect.assert_called_once()
@@ -450,3 +430,56 @@ class TestSystemPromptInjection:
         assert options.system_prompt["preset"] == "claude_code"
         assert "# Herald Memory" in options.system_prompt["append"]
         assert "Test observation" in options.system_prompt["append"]
+
+
+class TestModelAndAgentTeamsConfig:
+    """Tests for model selection and agent teams configuration."""
+
+    def test_get_options_with_model(self, tmp_path):
+        """Should pass model to ClaudeAgentOptions when configured."""
+        executor = ClaudeExecutor(
+            working_dir=tmp_path, model="claude-opus-4-6"
+        )
+        options = executor._get_options()
+        assert options.model == "claude-opus-4-6"
+
+    def test_get_options_without_model(self, tmp_path):
+        """Should default to None when no model configured."""
+        executor = ClaudeExecutor(working_dir=tmp_path)
+        options = executor._get_options()
+        assert options.model is None
+
+    def test_get_options_with_agent_teams(self, tmp_path):
+        """Should set agent teams env var when enabled."""
+        executor = ClaudeExecutor(
+            working_dir=tmp_path, agent_teams=True
+        )
+        options = executor._get_options()
+        assert options.env == {"CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS": "1"}
+
+    def test_get_options_without_agent_teams(self, tmp_path):
+        """Should not set env when agent teams disabled."""
+        executor = ClaudeExecutor(working_dir=tmp_path)
+        options = executor._get_options()
+        assert options.env is None
+
+    def test_get_options_with_both(self, tmp_path):
+        """Should set both model and agent teams together."""
+        executor = ClaudeExecutor(
+            working_dir=tmp_path,
+            model="claude-opus-4-6",
+            agent_teams=True,
+        )
+        options = executor._get_options()
+        assert options.model == "claude-opus-4-6"
+        assert options.env == {"CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS": "1"}
+
+    def test_create_executor_with_model_and_agent_teams(self, tmp_path):
+        """Factory function should pass model and agent_teams through."""
+        executor = create_executor(
+            working_dir=tmp_path,
+            model="claude-opus-4-6",
+            agent_teams=True,
+        )
+        assert executor.model == "claude-opus-4-6"
+        assert executor.agent_teams is True

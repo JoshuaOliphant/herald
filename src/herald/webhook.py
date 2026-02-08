@@ -236,6 +236,8 @@ def create_app(settings: Settings) -> FastAPI:
         executor = create_executor(
             working_dir=settings.second_brain_path,
             memory_path=settings.herald_memory_path,
+            model=settings.claude_model,
+            agent_teams=settings.agent_teams,
         )
 
         # Set up heartbeat components

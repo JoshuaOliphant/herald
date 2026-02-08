@@ -1,8 +1,10 @@
 # ABOUTME: Claude Code execution wrapper for Herald using Agent SDK
 # ABOUTME: Manages per-chat clients for conversation continuity with memory priming
 
+import asyncio
 import contextlib
 import logging
+from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -11,11 +13,16 @@ from claude_agent_sdk import (
     AssistantMessage,
     ClaudeAgentOptions,
     ClaudeSDKClient,
+    Message,
     ResultMessage,
     TextBlock,
 )
 
 logger = logging.getLogger(__name__)
+
+# After the last message, wait this long for more before considering done.
+# Agent teams produce multiple ResultMessages with gaps between them.
+MESSAGE_IDLE_TIMEOUT = 30.0
 
 # Memory loading configuration
 # Priority order: most actionable first
@@ -40,9 +47,17 @@ class ExecutionResult:
 class ClaudeExecutor:
     """Executes Claude Code queries using the Agent SDK with conversation continuity."""
 
-    def __init__(self, working_dir: Path, memory_path: Path | None = None):
+    def __init__(
+        self,
+        working_dir: Path,
+        memory_path: Path | None = None,
+        model: str | None = None,
+        agent_teams: bool = False,
+    ):
         self.working_dir = working_dir
         self.memory_path = memory_path
+        self.model = model
+        self.agent_teams = agent_teams
         # Per-chat clients for conversation continuity
         self._clients: dict[int, ClaudeSDKClient] = {}
 
@@ -114,6 +129,10 @@ class ClaudeExecutor:
             permission_mode="bypassPermissions",
             max_turns=200,  # Allow long-running research and multi-step tasks
             system_prompt=system_prompt,
+            model=self.model,
+            env={"CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS": "1"}
+            if self.agent_teams
+            else None,
         )
 
     async def _get_client(self, chat_id: int) -> ClaudeSDKClient:
@@ -129,8 +148,9 @@ class ClaudeExecutor:
         """
         Execute a prompt through Claude Agent SDK.
 
-        Uses bypassPermissions for automation but relies on
-        damage-control hooks for safety guardrails.
+        Uses receive_messages() with idle timeout to support both regular
+        queries and agent teams (which produce multiple ResultMessages
+        across lead idle/wake cycles).
         """
         logger.info(f"Executing via SDK for chat {chat_id}: {prompt[:100]}...")
 
@@ -139,18 +159,33 @@ class ClaudeExecutor:
             await client.query(prompt)
 
             text_parts: list[str] = []
-            result_text: str | None = None
+            last_result_text: str | None = None
 
-            async for message in client.receive_response():
+            msg_iter = client.receive_messages().__aiter__()
+            while True:
+                try:
+                    message = await asyncio.wait_for(
+                        _next_message(msg_iter),
+                        timeout=MESSAGE_IDLE_TIMEOUT,
+                    )
+                except TimeoutError:
+                    break
+                if message is None:
+                    break
+
                 if isinstance(message, AssistantMessage):
                     for block in message.content:
                         if isinstance(block, TextBlock):
                             text_parts.append(block.text)
                 elif isinstance(message, ResultMessage) and message.result:
-                    result_text = message.result
+                    last_result_text = message.result
 
             # Prefer result text if available, otherwise combine text parts
-            final_output = result_text if result_text is not None else "\n".join(text_parts)
+            final_output = (
+                last_result_text
+                if last_result_text is not None
+                else "\n".join(text_parts)
+            )
 
             return ExecutionResult(
                 success=True,
@@ -191,9 +226,27 @@ class ClaudeExecutor:
         self._clients.clear()
 
 
-def create_executor(working_dir: Path, memory_path: Path | None = None) -> ClaudeExecutor:
+async def _next_message(msg_iter: AsyncIterator[Message]) -> Message | None:
+    """Get next message from async iterator, returning None on exhaustion."""
+    try:
+        return await msg_iter.__anext__()
+    except StopAsyncIteration:
+        return None
+
+
+def create_executor(
+    working_dir: Path,
+    memory_path: Path | None = None,
+    model: str | None = None,
+    agent_teams: bool = False,
+) -> ClaudeExecutor:
     """Factory function to create a ClaudeExecutor with validation."""
     if not working_dir.exists():
         raise ValueError(f"Working directory does not exist: {working_dir}")
 
-    return ClaudeExecutor(working_dir=working_dir, memory_path=memory_path)
+    return ClaudeExecutor(
+        working_dir=working_dir,
+        memory_path=memory_path,
+        model=model,
+        agent_teams=agent_teams,
+    )

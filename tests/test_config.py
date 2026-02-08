@@ -106,3 +106,45 @@ class TestHeraldMemoryPath:
             memory_path=Path("custom/memory"),
         )
         assert settings.herald_memory_path == tmp_path / "custom" / "memory"
+
+
+class TestModelAndAgentTeamsSettings:
+    """Tests for Claude model and agent teams configuration."""
+
+    def test_claude_model_defaults_to_none(self, tmp_path):
+        """Model should default to None (use SDK default)."""
+        settings = Settings(
+            telegram_bot_token="test_token",
+            allowed_telegram_user_ids=[123],
+            second_brain_path=tmp_path,
+        )
+        assert settings.claude_model is None
+
+    def test_claude_model_from_constructor(self, tmp_path):
+        """Model should be settable via constructor."""
+        settings = Settings(
+            telegram_bot_token="test_token",
+            allowed_telegram_user_ids=[123],
+            second_brain_path=tmp_path,
+            claude_model="claude-opus-4-6",
+        )
+        assert settings.claude_model == "claude-opus-4-6"
+
+    def test_agent_teams_defaults_to_false(self, tmp_path):
+        """Agent teams should be disabled by default."""
+        settings = Settings(
+            telegram_bot_token="test_token",
+            allowed_telegram_user_ids=[123],
+            second_brain_path=tmp_path,
+        )
+        assert settings.agent_teams is False
+
+    def test_agent_teams_enabled(self, tmp_path):
+        """Agent teams should be settable via constructor."""
+        settings = Settings(
+            telegram_bot_token="test_token",
+            allowed_telegram_user_ids=[123],
+            second_brain_path=tmp_path,
+            agent_teams=True,
+        )
+        assert settings.agent_teams is True
