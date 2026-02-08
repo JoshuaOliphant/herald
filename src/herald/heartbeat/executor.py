@@ -125,20 +125,27 @@ class HeartbeatExecutor:
 
         return prompt
 
-    async def execute(self) -> HeartbeatResult:
+    async def execute(self, chat_id: int | None = None) -> HeartbeatResult:
         """
         Execute a heartbeat check.
+
+        Args:
+            chat_id: Target chat ID for shared conversation. If None,
+                     falls back to the reserved HEARTBEAT_CHAT_ID.
 
         Returns:
             HeartbeatResult with classification and delivery decision
         """
+        target_chat_id = chat_id if chat_id is not None else self.HEARTBEAT_CHAT_ID
         prompt = self._build_prompt()
-        logger.info(f"Executing heartbeat with prompt length: {len(prompt)} chars")
+        logger.info(
+            f"Executing heartbeat ({len(prompt)} chars, chat_id={target_chat_id})"
+        )
 
         try:
             result: ExecutionResult = await self.claude_executor.execute(
                 prompt=prompt,
-                chat_id=self.HEARTBEAT_CHAT_ID,
+                chat_id=target_chat_id,
             )
 
             if not result.success:

@@ -14,6 +14,9 @@ logger = logging.getLogger(__name__)
 # Type alias for alert callback
 AlertCallback = Callable[[HeartbeatResult], Awaitable[None]]
 
+# Type alias for target chat resolver
+GetTargetChat = Callable[[], int | None]
+
 
 class HeartbeatScheduler:
     """
@@ -22,8 +25,9 @@ class HeartbeatScheduler:
     This scheduler:
     1. Runs on a configurable interval
     2. Respects active hours (skip execution outside window)
-    3. Executes HeartbeatExecutor and processes results
-    4. Calls on_alert callback when results should be delivered
+    3. Resolves target chat for shared conversation context
+    4. Executes HeartbeatExecutor and processes results
+    5. Calls on_alert callback when results should be delivered
     """
 
     def __init__(
@@ -31,6 +35,7 @@ class HeartbeatScheduler:
         config: HeartbeatConfig,
         executor: HeartbeatExecutor,
         on_alert: AlertCallback | None = None,
+        get_target_chat: GetTargetChat | None = None,
     ):
         """
         Initialize the HeartbeatScheduler.
@@ -39,10 +44,13 @@ class HeartbeatScheduler:
             config: HeartbeatConfig with interval and active hours settings
             executor: HeartbeatExecutor to run checks
             on_alert: Optional callback for deliverable results
+            get_target_chat: Optional callback to resolve which chat to
+                execute in. Returns chat_id or None (skip heartbeat).
         """
         self.config = config
         self.executor = executor
         self.on_alert = on_alert
+        self.get_target_chat = get_target_chat
         self._running = False
         self._task: asyncio.Task[None] | None = None
 
@@ -126,11 +134,22 @@ class HeartbeatScheduler:
     async def _execute_heartbeat(self) -> None:
         """
         Execute a single heartbeat and handle the result.
+
+        Resolves the target chat from get_target_chat callback. If no
+        active chat is available, the heartbeat is skipped.
         """
-        logger.debug("Executing heartbeat check")
+        # Resolve target chat for shared conversation
+        chat_id: int | None = None
+        if self.get_target_chat:
+            chat_id = self.get_target_chat()
+            if chat_id is None:
+                logger.info("Heartbeat skipped: no active chat available")
+                return
+
+        logger.debug(f"Executing heartbeat check (chat_id={chat_id})")
 
         try:
-            result = await self.executor.execute()
+            result = await self.executor.execute(chat_id=chat_id)
 
             if not result.success:
                 logger.error(f"Heartbeat execution failed: {result.error}")

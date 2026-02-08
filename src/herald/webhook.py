@@ -253,17 +253,19 @@ def create_app(settings: Settings) -> FastAPI:
                 target=heartbeat_config.target,
             )
 
+            # Share the same executor so heartbeat joins the regular conversation
             heartbeat_executor = HeartbeatExecutor(
                 config=heartbeat_config,
                 working_dir=settings.second_brain_path,
                 heartbeat_file=settings.heartbeat_file_path,
-                memory_path=settings.herald_memory_path,
+                claude_executor=executor,
             )
 
             heartbeat_scheduler = HeartbeatScheduler(
                 config=heartbeat_config,
                 executor=heartbeat_executor,
                 on_alert=heartbeat_delivery.deliver,
+                get_target_chat=heartbeat_delivery.get_target_chat,
             )
 
         # Create webhook handler with activity tracking

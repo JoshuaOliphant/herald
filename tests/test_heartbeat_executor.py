@@ -269,8 +269,30 @@ class TestHeartbeatExecutorExecution:
         assert result.should_deliver is False
 
     @pytest.mark.asyncio
-    async def test_execute_uses_heartbeat_chat_id(self, tmp_path, mock_claude_executor):
-        """Test that heartbeat uses a reserved chat ID."""
+    async def test_execute_uses_provided_chat_id(self, tmp_path, mock_claude_executor):
+        """Test that heartbeat uses the provided chat ID for shared conversation."""
+        mock_claude_executor.execute.return_value = ExecutionResult(
+            success=True,
+            output="HEARTBEAT_OK",
+        )
+
+        config = HeartbeatConfig()
+        executor = HeartbeatExecutor(
+            config=config,
+            working_dir=tmp_path,
+            claude_executor=mock_claude_executor,
+        )
+
+        await executor.execute(chat_id=12345)
+
+        # Verify execute was called with the provided chat ID
+        mock_claude_executor.execute.assert_called_once()
+        call_args = mock_claude_executor.execute.call_args
+        assert call_args[1]["chat_id"] == 12345
+
+    @pytest.mark.asyncio
+    async def test_execute_falls_back_to_heartbeat_chat_id(self, tmp_path, mock_claude_executor):
+        """Test that heartbeat falls back to reserved ID when no chat_id provided."""
         mock_claude_executor.execute.return_value = ExecutionResult(
             success=True,
             output="HEARTBEAT_OK",
@@ -285,7 +307,7 @@ class TestHeartbeatExecutorExecution:
 
         await executor.execute()
 
-        # Verify execute was called with the heartbeat chat ID
+        # Verify execute was called with the fallback heartbeat chat ID
         mock_claude_executor.execute.assert_called_once()
         call_args = mock_claude_executor.execute.call_args
         assert call_args[1]["chat_id"] == HeartbeatExecutor.HEARTBEAT_CHAT_ID
