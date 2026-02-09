@@ -70,6 +70,9 @@ class ClaudeExecutor:
         self.agent_teams = agent_teams
         # Per-chat clients for conversation continuity
         self._clients: dict[int, ClaudeSDKClient] = {}
+        # Per-chat locks to serialize execute() calls and prevent racing
+        # on the shared receive_messages() stream
+        self._locks: dict[int, asyncio.Lock] = {}
 
     def _smart_truncate(self, content: str, max_chars: int) -> str:
         """Truncate content while preserving line boundaries."""
@@ -154,6 +157,12 @@ class ClaudeExecutor:
             logger.info(f"Created new SDK client for chat {chat_id}")
         return self._clients[chat_id]
 
+    def _get_lock(self, chat_id: int) -> asyncio.Lock:
+        """Get or create a lock for a chat to serialize execute() calls."""
+        if chat_id not in self._locks:
+            self._locks[chat_id] = asyncio.Lock()
+        return self._locks[chat_id]
+
     async def execute(
         self,
         prompt: str,
@@ -169,7 +178,23 @@ class ClaudeExecutor:
 
         If on_assistant_text is provided, substantive AssistantMessage text
         (above MIN_STREAM_LENGTH) is forwarded via the callback as it arrives.
+
+        Acquires a per-chat lock to prevent concurrent execute() calls from
+        racing on the shared SDK client's receive_messages() stream.
         """
+        lock = self._get_lock(chat_id)
+        async with lock:
+            return await self._execute_locked(
+                prompt, chat_id, on_assistant_text
+            )
+
+    async def _execute_locked(
+        self,
+        prompt: str,
+        chat_id: int,
+        on_assistant_text: Callable[[str], Awaitable[None]] | None = None,
+    ) -> ExecutionResult:
+        """Execute a prompt while holding the per-chat lock."""
         logger.info(
             "[chat %d] Executing: %s", chat_id, prompt[:100]
         )

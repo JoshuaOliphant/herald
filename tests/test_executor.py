@@ -707,6 +707,143 @@ class TestExecutionLogging:
             assert any("init" in r.message for r in caplog.records)
 
 
+class TestConcurrencyLocking:
+    """Tests for per-chat locking to prevent concurrent SDK client access.
+
+    When multiple execute() calls target the same chat_id, they must be
+    serialized to prevent racing on the shared receive_messages() stream.
+    """
+
+    @pytest.fixture
+    def executor(self, tmp_path):
+        """Create an executor with a valid working directory."""
+        return ClaudeExecutor(working_dir=tmp_path)
+
+    @pytest.mark.asyncio
+    async def test_concurrent_executes_are_serialized(self, executor):
+        """Two concurrent execute() calls on the same chat should not overlap."""
+        with patch("herald.executor.ClaudeSDKClient") as mock_client_class:
+            mock_client = AsyncMock()
+            mock_client.connect = AsyncMock()
+            mock_client.query = AsyncMock()
+
+            # Track execution order to prove serialization
+            execution_log: list[str] = []
+
+            async def mock_receive_slow():
+                execution_log.append("slow_start")
+                yield _make_assistant("Working...")
+                await asyncio.sleep(0.1)  # Simulate work
+                yield _make_result("Slow result")
+                execution_log.append("slow_end")
+
+            async def mock_receive_fast():
+                execution_log.append("fast_start")
+                yield _make_result("Fast result")
+                execution_log.append("fast_end")
+
+            call_count = 0
+
+            def receive_side_effect():
+                nonlocal call_count
+                call_count += 1
+                if call_count == 1:
+                    return mock_receive_slow()
+                return mock_receive_fast()
+
+            mock_client.receive_messages = receive_side_effect
+            mock_client_class.return_value = mock_client
+
+            # Launch two concurrent execute() calls on the same chat
+            task1 = asyncio.create_task(
+                executor.execute("First", chat_id=100)
+            )
+            task2 = asyncio.create_task(
+                executor.execute("Second", chat_id=100)
+            )
+
+            result1, result2 = await asyncio.gather(task1, task2)
+
+            # Both should succeed
+            assert result1.success is True
+            assert result2.success is True
+
+            # Serialization: slow must fully complete before fast starts
+            assert execution_log.index("slow_end") < execution_log.index("fast_start")
+
+    @pytest.mark.asyncio
+    async def test_different_chats_can_run_concurrently(self, executor):
+        """Execute() calls on different chat_ids should NOT block each other."""
+        with patch("herald.executor.ClaudeSDKClient") as mock_client_class:
+            execution_log: list[str] = []
+
+            async def mock_receive_chat1():
+                execution_log.append("chat1_start")
+                await asyncio.sleep(0.05)
+                yield _make_result("Chat 1 done")
+                execution_log.append("chat1_end")
+
+            async def mock_receive_chat2():
+                execution_log.append("chat2_start")
+                yield _make_result("Chat 2 done")
+                execution_log.append("chat2_end")
+
+            call_count = 0
+
+            def make_client(**kwargs):
+                nonlocal call_count
+                call_count += 1
+                client = AsyncMock()
+                client.connect = AsyncMock()
+                client.query = AsyncMock()
+                if call_count == 1:
+                    client.receive_messages = mock_receive_chat1
+                else:
+                    client.receive_messages = mock_receive_chat2
+                return client
+
+            mock_client_class.side_effect = make_client
+
+            # Launch concurrent calls on DIFFERENT chats
+            task1 = asyncio.create_task(
+                executor.execute("Msg 1", chat_id=111)
+            )
+            task2 = asyncio.create_task(
+                executor.execute("Msg 2", chat_id=222)
+            )
+
+            await asyncio.gather(task1, task2)
+
+            # Chat 2 (fast) should start before chat 1 (slow) ends
+            assert execution_log.index("chat2_start") < execution_log.index("chat1_end")
+
+    @pytest.mark.asyncio
+    async def test_lock_released_after_error(self, executor):
+        """Lock should be released even if execute() raises, allowing next call."""
+        with patch("herald.executor.ClaudeSDKClient") as mock_client_class:
+            mock_client = AsyncMock()
+            mock_client.connect = AsyncMock()
+            mock_client.disconnect = AsyncMock()
+            # First query raises, second succeeds
+            mock_client.query = AsyncMock(
+                side_effect=[RuntimeError("Boom"), None]
+            )
+
+            async def mock_receive():
+                yield _make_result("Recovery")
+
+            mock_client.receive_messages = mock_receive
+            mock_client_class.return_value = mock_client
+
+            # First call fails
+            result1 = await executor.execute("Fail", chat_id=100)
+            assert result1.success is False
+
+            # Second call should work (lock was released)
+            result2 = await executor.execute("Recover", chat_id=100)
+            assert result2.success is True
+
+
 class TestStreamingCallback:
     """Tests for on_assistant_text streaming callback during execution.
 
