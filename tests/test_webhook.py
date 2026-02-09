@@ -1,6 +1,7 @@
 # ABOUTME: Tests for Herald webhook handler
 # ABOUTME: Validates user authorization, message routing, and /reset command
 
+import asyncio
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 
@@ -390,3 +391,108 @@ class TestWebhookHandlerAsync:
 
         # Should only execute once
         mock_executor.execute.assert_called_once()
+
+    async def test_typing_indicator_sent_continuously(self, mock_settings, mock_executor):
+        """Should send typing indicators repeatedly while executor runs."""
+        handler = WebhookHandler(mock_settings, mock_executor)
+        handler.TYPING_INTERVAL = 0.05  # Speed up for testing
+        handler._http_client = AsyncMock()
+        handler._http_client.post = AsyncMock(return_value=MagicMock(status_code=200))
+
+        # Make executor.execute take long enough for multiple typing indicators
+        async def slow_execute(prompt, chat_id, on_assistant_text=None):
+            await asyncio.sleep(0.2)  # Long enough for multiple 0.05s typing intervals
+            return ExecutionResult(success=True, output="Done")
+
+        mock_executor.execute = AsyncMock(side_effect=slow_execute)
+
+        update = TelegramUpdate(
+            update_id=10,
+            message={
+                "from": {"id": 12345, "username": "laboeuf"},
+                "chat": {"id": 12345},
+                "text": "Do research",
+            },
+        )
+
+        await handler.handle_update(update)
+
+        # Count typing action calls (sendChatAction URL pattern)
+        typing_calls = [
+            c for c in handler._http_client.post.call_args_list
+            if "sendChatAction" in str(c)
+        ]
+        # Should have sent multiple typing indicators (not just one)
+        assert len(typing_calls) >= 2, (
+            f"Expected multiple typing calls, got {len(typing_calls)}"
+        )
+
+    async def test_typing_indicator_stops_after_execution(self, mock_settings, mock_executor):
+        """Typing loop should be cancelled after executor completes."""
+        handler = WebhookHandler(mock_settings, mock_executor)
+        handler._http_client = AsyncMock()
+        handler._http_client.post = AsyncMock(return_value=MagicMock(status_code=200))
+
+        async def fast_execute(prompt, chat_id, on_assistant_text=None):
+            return ExecutionResult(success=True, output="Quick")
+
+        mock_executor.execute = AsyncMock(side_effect=fast_execute)
+
+        update = TelegramUpdate(
+            update_id=11,
+            message={
+                "from": {"id": 12345, "username": "laboeuf"},
+                "chat": {"id": 12345},
+                "text": "Quick question",
+            },
+        )
+
+        await handler.handle_update(update)
+
+        # Record typing calls at this point
+        typing_before = len([
+            c for c in handler._http_client.post.call_args_list
+            if "sendChatAction" in str(c)
+        ])
+
+        # Wait a bit — no new typing calls should appear
+        await asyncio.sleep(0.1)
+
+        typing_after = len([
+            c for c in handler._http_client.post.call_args_list
+            if "sendChatAction" in str(c)
+        ])
+
+        # No new typing calls after execution completed
+        assert typing_after == typing_before
+
+    async def test_timeout_error_sent_to_user(self, mock_settings, mock_executor):
+        """When executor returns timed_out failure, error message should be sent."""
+        handler = WebhookHandler(mock_settings, mock_executor)
+        handler._http_client = AsyncMock()
+        handler._http_client.post = AsyncMock(return_value=MagicMock(status_code=200))
+
+        mock_executor.execute = AsyncMock(
+            return_value=ExecutionResult(
+                success=False,
+                output="",
+                error="Timed out after 600s waiting for Claude to respond",
+                timed_out=True,
+            )
+        )
+
+        update = TelegramUpdate(
+            update_id=12,
+            message={
+                "from": {"id": 12345, "username": "laboeuf"},
+                "chat": {"id": 12345},
+                "text": "Heavy research task",
+            },
+        )
+
+        await handler.handle_update(update)
+
+        # Should send the error message to the user
+        send_calls = handler._http_client.post.call_args_list
+        message_calls = [c for c in send_calls if "sendMessage" in str(c)]
+        assert any("timed out" in str(c).lower() for c in message_calls)

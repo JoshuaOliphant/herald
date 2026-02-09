@@ -23,11 +23,11 @@ from claude_agent_sdk import (
 
 logger = logging.getLogger(__name__)
 
-# After the last message, wait this long for more before considering done.
-# Agent teams produce multiple ResultMessages with gaps between them.
-# Heavy research tasks (reading 50+ files) need time to compose a response,
-# so this must be generous enough for the API call to complete.
-MESSAGE_IDLE_TIMEOUT = 120.0
+# Safety-net timeout for detecting hangs. The primary completion signal is the
+# iterator's natural StopAsyncIteration (SDK sends {"type": "end"}).
+# This only fires when the subprocess stops producing messages entirely —
+# e.g., stuck tool calls, network issues, or API-side hangs.
+MESSAGE_IDLE_TIMEOUT = 600.0
 
 # Only stream AssistantMessage text to the callback when it exceeds this length.
 # Filters out short status messages ("Let me check...") while forwarding
@@ -52,6 +52,7 @@ class ExecutionResult:
     success: bool
     output: str
     error: str | None = None
+    timed_out: bool = False
 
 
 class ClaudeExecutor:
@@ -275,11 +276,35 @@ class ClaudeExecutor:
             elapsed = time.monotonic() - start_time
 
             if timed_out and result_count == 0:
+                # Genuine hang — no ResultMessage means Claude never finished.
+                # Reset the client since the subprocess is in an unknown state.
                 logger.warning(
                     "[chat %d] Timed out after %.1fs with no "
-                    "ResultMessage (%d tool calls). Claude may "
-                    "have been composing a long response.",
+                    "ResultMessage (%d tool calls). Resetting client.",
                     chat_id, elapsed, tool_count,
+                )
+                if chat_id in self._clients:
+                    with contextlib.suppress(Exception):
+                        await self._clients[chat_id].disconnect()
+                    del self._clients[chat_id]
+                return ExecutionResult(
+                    success=False,
+                    output="",
+                    error=(
+                        f"Timed out after {elapsed:.0f}s waiting for "
+                        f"Claude to respond ({tool_count} tool calls "
+                        f"in progress)"
+                    ),
+                    timed_out=True,
+                )
+
+            if timed_out and result_count > 0:
+                # Agent team completed (got results) but iterator didn't close.
+                # Use last result — this is a successful completion.
+                logger.info(
+                    "[chat %d] Timed out after %.1fs but had %d "
+                    "result(s), treating as complete.",
+                    chat_id, elapsed, result_count,
                 )
 
             # Prefer result text if available, otherwise combine text parts
@@ -302,6 +327,7 @@ class ClaudeExecutor:
             return ExecutionResult(
                 success=True,
                 output=final_output.strip(),
+                timed_out=timed_out,
             )
 
         except Exception as e:

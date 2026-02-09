@@ -2,6 +2,7 @@
 # ABOUTME: Receives messages, validates users, routes to Claude Code
 
 import asyncio
+import contextlib
 import logging
 from collections import OrderedDict
 from collections.abc import Callable
@@ -32,6 +33,10 @@ class TelegramUpdate(BaseModel):
 
 class WebhookHandler:
     """Handles incoming Telegram webhook updates."""
+
+    # How often to re-send typing indicators (seconds).
+    # Telegram's typing bubble expires after ~5s.
+    TYPING_INTERVAL = 5
 
     def __init__(
         self,
@@ -142,9 +147,6 @@ class WebhookHandler:
             timestamp=timestamp,
         )
 
-        # Send typing indicator
-        await self._send_chat_action(chat_id, "typing")
-
         # Stream substantive intermediate text to Telegram as it arrives
         streamed_chunks: list[str] = []
 
@@ -154,10 +156,23 @@ class WebhookHandler:
             for msg in messages:
                 await self._send_message(chat_id, msg.text, parse_mode=msg.parse_mode)
 
-        # Execute through Claude Code (with chat_id for conversation continuity)
-        result = await self.executor.execute(
-            text, chat_id, on_assistant_text=on_assistant_text,
-        )
+        # Send typing indicators continuously while executor runs.
+        # Telegram's typing bubble expires after ~5s, so re-send to keep it visible.
+        async def send_typing_loop() -> None:
+            while True:
+                await self._send_chat_action(chat_id, "typing")
+                await asyncio.sleep(self.TYPING_INTERVAL)
+
+        typing_task = asyncio.create_task(send_typing_loop())
+        try:
+            # Execute through Claude Code (with chat_id for conversation continuity)
+            result = await self.executor.execute(
+                text, chat_id, on_assistant_text=on_assistant_text,
+            )
+        finally:
+            typing_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await typing_task
 
         if result.success:
             if not streamed_chunks:
