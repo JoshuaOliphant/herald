@@ -173,7 +173,11 @@ class TestWebhookHandlerAsync:
         # Should execute the prompt with chat_id (plus streaming callback)
         mock_executor.execute.assert_called_once()
         call_args = mock_executor.execute.call_args
-        assert call_args.args == ("What's on my todo list?", 12345)
+        # Prompt is prefixed with current date/time
+        prompt = call_args.args[0]
+        assert "[Current time:" in prompt
+        assert "What's on my todo list?" in prompt
+        assert call_args.args[1] == 12345
         assert "on_assistant_text" in call_args.kwargs
         # Should send the response
         assert handler._http_client.post.call_count >= 1
@@ -477,7 +481,6 @@ class TestWebhookHandlerAsync:
                 success=False,
                 output="",
                 error="Timed out after 600s waiting for Claude to respond",
-                timed_out=True,
             )
         )
 

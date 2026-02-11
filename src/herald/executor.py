@@ -27,7 +27,13 @@ logger = logging.getLogger(__name__)
 # iterator's natural StopAsyncIteration (SDK sends {"type": "end"}).
 # This only fires when the subprocess stops producing messages entirely —
 # e.g., stuck tool calls, network issues, or API-side hangs.
-MESSAGE_IDLE_TIMEOUT = 600.0
+MESSAGE_IDLE_TIMEOUT = 1800.0
+
+# After receiving a ResultMessage, use this shorter timeout for subsequent
+# messages. Once we have results, any follow-up (e.g., agent team handoffs)
+# should arrive quickly. This prevents holding the per-chat lock for the
+# full MESSAGE_IDLE_TIMEOUT after work is already complete.
+POST_RESULT_IDLE_TIMEOUT = 30.0
 
 # Only stream AssistantMessage text to the callback when it exceeds this length.
 # Filters out short status messages ("Let me check...") while forwarding
@@ -52,7 +58,6 @@ class ExecutionResult:
     success: bool
     output: str
     error: str | None = None
-    timed_out: bool = False
 
 
 class ClaudeExecutor:
@@ -164,6 +169,14 @@ class ClaudeExecutor:
             self._locks[chat_id] = asyncio.Lock()
         return self._locks[chat_id]
 
+    async def _reset_client(self, chat_id: int) -> None:
+        """Disconnect and remove the SDK client for a chat."""
+        if chat_id not in self._clients:
+            return
+        with contextlib.suppress(Exception):
+            await self._clients[chat_id].disconnect()
+        del self._clients[chat_id]
+
     async def execute(
         self,
         prompt: str,
@@ -209,23 +222,27 @@ class ClaudeExecutor:
             last_result_text: str | None = None
             result_count = 0
             tool_count = 0
-            message_count = 0
             timed_out = False
 
             msg_iter = client.receive_messages().__aiter__()
             while True:
+                # Once we have results, use a shorter timeout — any follow-up
+                # messages (agent team handoffs) should arrive quickly.
+                timeout = (
+                    POST_RESULT_IDLE_TIMEOUT
+                    if result_count > 0
+                    else MESSAGE_IDLE_TIMEOUT
+                )
                 try:
                     message = await asyncio.wait_for(
                         _next_message(msg_iter),
-                        timeout=MESSAGE_IDLE_TIMEOUT,
+                        timeout=timeout,
                     )
                 except TimeoutError:
                     timed_out = True
                     break
                 if message is None:
                     break
-
-                message_count += 1
 
                 if isinstance(message, AssistantMessage):
                     msg_text_parts: list[str] = []
@@ -283,10 +300,7 @@ class ClaudeExecutor:
                     "ResultMessage (%d tool calls). Resetting client.",
                     chat_id, elapsed, tool_count,
                 )
-                if chat_id in self._clients:
-                    with contextlib.suppress(Exception):
-                        await self._clients[chat_id].disconnect()
-                    del self._clients[chat_id]
+                await self._reset_client(chat_id)
                 return ExecutionResult(
                     success=False,
                     output="",
@@ -295,12 +309,9 @@ class ClaudeExecutor:
                         f"Claude to respond ({tool_count} tool calls "
                         f"in progress)"
                     ),
-                    timed_out=True,
                 )
 
-            if timed_out and result_count > 0:
-                # Agent team completed (got results) but iterator didn't close.
-                # Use last result — this is a successful completion.
+            if timed_out:
                 logger.info(
                     "[chat %d] Timed out after %.1fs but had %d "
                     "result(s), treating as complete.",
@@ -316,18 +327,16 @@ class ClaudeExecutor:
 
             logger.info(
                 "[chat %d] Complete: %d result(s), %d tool call(s), "
-                "%d message(s), %.1fs",
+                "%.1fs",
                 chat_id,
                 result_count,
                 tool_count,
-                message_count,
                 elapsed,
             )
 
             return ExecutionResult(
                 success=True,
                 output=final_output.strip(),
-                timed_out=timed_out,
             )
 
         except Exception as e:
@@ -337,10 +346,7 @@ class ClaudeExecutor:
                 chat_id, elapsed, e,
             )
             # On error, remove the client so next request creates fresh one
-            if chat_id in self._clients:
-                with contextlib.suppress(Exception):
-                    await self._clients[chat_id].disconnect()
-                del self._clients[chat_id]
+            await self._reset_client(chat_id)
             return ExecutionResult(
                 success=False,
                 output="",
@@ -351,11 +357,7 @@ class ClaudeExecutor:
         """Reset conversation for a chat (fresh start)."""
         if chat_id in self._clients:
             logger.info(f"Resetting conversation for chat {chat_id}")
-            try:
-                await self._clients[chat_id].disconnect()
-            except Exception as e:
-                logger.warning(f"Error disconnecting client for chat {chat_id}: {e}")
-            del self._clients[chat_id]
+        await self._reset_client(chat_id)
 
     async def shutdown(self) -> None:
         """Disconnect all clients on shutdown."""

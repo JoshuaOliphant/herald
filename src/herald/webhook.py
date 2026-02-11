@@ -163,11 +163,15 @@ class WebhookHandler:
                 await self._send_chat_action(chat_id, "typing")
                 await asyncio.sleep(self.TYPING_INTERVAL)
 
+        # Prepend current date/time so Claude knows when this message was sent
+        now = datetime.now().strftime("%A, %B %-d, %Y at %-I:%M %p")
+        prompt = f"[Current time: {now}]\n\n{text}"
+
         typing_task = asyncio.create_task(send_typing_loop())
         try:
             # Execute through Claude Code (with chat_id for conversation continuity)
             result = await self.executor.execute(
-                text, chat_id, on_assistant_text=on_assistant_text,
+                prompt, chat_id, on_assistant_text=on_assistant_text,
             )
         finally:
             typing_task.cancel()
@@ -287,7 +291,7 @@ def create_app(settings: Settings) -> FastAPI:
                 target=heartbeat_config.target,
             )
 
-            # Share the same executor so heartbeat joins the regular conversation
+            # Heartbeat uses its own conversation via HEARTBEAT_CHAT_ID
             heartbeat_executor = HeartbeatExecutor(
                 config=heartbeat_config,
                 working_dir=settings.second_brain_path,
@@ -299,7 +303,6 @@ def create_app(settings: Settings) -> FastAPI:
                 config=heartbeat_config,
                 executor=heartbeat_executor,
                 on_alert=heartbeat_delivery.deliver,
-                get_target_chat=heartbeat_delivery.get_target_chat,
             )
 
         # Create webhook handler with activity tracking

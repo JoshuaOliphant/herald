@@ -28,15 +28,6 @@ class TestExecutionResult:
         assert result.output == ""
         assert result.error == "Something broke"
 
-    def test_result_timed_out_defaults_false(self):
-        """timed_out should default to False for backward compatibility."""
-        result = ExecutionResult(success=True, output="Hello")
-        assert result.timed_out is False
-
-        # Explicit construction should also work
-        result_explicit = ExecutionResult(success=True, output="Hello", timed_out=True)
-        assert result_explicit.timed_out is True
-
 
 def _make_assistant(*texts: str) -> MagicMock:
     """Create a mock AssistantMessage with given text blocks."""
@@ -218,6 +209,33 @@ class TestClaudeExecutor:
         # Should not raise
         await executor.reset_chat(99999)
         assert 99999 not in executor._clients
+
+    @pytest.mark.asyncio
+    async def test_reset_client_disconnects_and_removes(self, executor):
+        """_reset_client should disconnect and remove the client."""
+        with patch("herald.executor.ClaudeSDKClient") as mock_client_class:
+            mock_client = AsyncMock()
+            mock_client.connect = AsyncMock()
+            mock_client.disconnect = AsyncMock()
+            mock_client.query = AsyncMock()
+
+            async def mock_receive():
+                yield _make_result("Response")
+
+            mock_client.receive_messages = mock_receive
+            mock_client_class.return_value = mock_client
+
+            await executor.execute("Hello", chat_id=500)
+            assert 500 in executor._clients
+
+            await executor._reset_client(500)
+            assert 500 not in executor._clients
+            mock_client.disconnect.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_reset_client_noop_for_unknown(self, executor):
+        """_reset_client should do nothing for unknown chat_id."""
+        await executor._reset_client(99999)  # Should not raise
 
     @pytest.mark.asyncio
     async def test_shutdown_disconnects_all_clients(self, executor):
@@ -693,7 +711,6 @@ class TestExecutionLogging:
             )
             # Timeout with no results should be a failure
             assert result.success is False
-            assert result.timed_out is True
             assert result.error is not None
             assert "timed out" in result.error.lower()
 
@@ -721,7 +738,6 @@ class TestExecutionLogging:
             result = await executor.execute("Hang", chat_id=200)
 
             assert result.success is False
-            assert result.timed_out is True
             # Client should be cleaned up (removed from _clients)
             assert 200 not in executor._clients
             mock_client.disconnect.assert_called_once()
@@ -734,6 +750,7 @@ class TestExecutionLogging:
         with (
             patch("herald.executor.ClaudeSDKClient") as mock_client_class,
             patch("herald.executor.MESSAGE_IDLE_TIMEOUT", 0.01),
+            patch("herald.executor.POST_RESULT_IDLE_TIMEOUT", 0.01),
         ):
             mock_client = AsyncMock()
             mock_client.connect = AsyncMock()
@@ -751,9 +768,38 @@ class TestExecutionLogging:
             result = await executor.execute("Review", chat_id=300)
 
             assert result.success is True
-            assert result.timed_out is True
             assert result.output == "Team result with findings"
             assert result.error is None
+
+    @pytest.mark.asyncio
+    async def test_post_result_timeout_is_shorter(self, executor):
+        """After receiving a ResultMessage, idle timeout should drop to POST_RESULT_IDLE_TIMEOUT."""
+        with (
+            patch("herald.executor.ClaudeSDKClient") as mock_client_class,
+            patch("herald.executor.MESSAGE_IDLE_TIMEOUT", 100),
+            patch("herald.executor.POST_RESULT_IDLE_TIMEOUT", 0.05),
+        ):
+            mock_client = AsyncMock()
+            mock_client.connect = AsyncMock()
+            mock_client.query = AsyncMock()
+
+            async def mock_receive():
+                yield _make_result("Quick answer")
+                # Hang — should hit the short post-result timeout, not the 100s one
+                await asyncio.sleep(10)
+
+            mock_client.receive_messages = mock_receive
+            mock_client_class.return_value = mock_client
+
+            start = asyncio.get_event_loop().time()
+            result = await executor.execute("Hello", chat_id=400)
+            elapsed = asyncio.get_event_loop().time() - start
+
+            assert result.success is True
+            assert result.output == "Quick answer"
+            # Should complete in well under 1s (post-result timeout is 0.05s),
+            # not 100s (the main timeout)
+            assert elapsed < 2.0
 
     @pytest.mark.asyncio
     async def test_logs_system_messages(self, executor, caplog):

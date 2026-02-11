@@ -153,7 +153,6 @@ class TestHeartbeatSchedulerExecution:
         scheduler = HeartbeatScheduler(
             config=config,
             executor=mock_executor,
-            get_target_chat=lambda: 12345,
         )
 
         scheduler.start()
@@ -164,8 +163,8 @@ class TestHeartbeatSchedulerExecution:
         mock_executor.execute.assert_called()
 
     @pytest.mark.asyncio
-    async def test_passes_chat_id_to_executor(self):
-        """Test that scheduler passes target chat_id to executor."""
+    async def test_executes_without_chat_id(self):
+        """Heartbeat should execute without passing chat_id (uses HEARTBEAT_CHAT_ID default)."""
         config = HeartbeatConfig(enabled=True, every="1h")
         mock_executor = MagicMock()
         mock_executor.execute = AsyncMock(
@@ -177,39 +176,15 @@ class TestHeartbeatSchedulerExecution:
             )
         )
 
-        scheduler = HeartbeatScheduler(
-            config=config,
-            executor=mock_executor,
-            get_target_chat=lambda: 67890,
-        )
-
+        scheduler = HeartbeatScheduler(config=config, executor=mock_executor)
         scheduler.start()
         await asyncio.sleep(0.1)
         await scheduler.stop()
 
-        # Verify chat_id was passed through
-        call_args = mock_executor.execute.call_args
-        assert call_args[1]["chat_id"] == 67890
-
-    @pytest.mark.asyncio
-    async def test_skips_execution_when_no_active_chat(self):
-        """Test that heartbeat skips when no active chat is available."""
-        config = HeartbeatConfig(enabled=True, every="1h")
-        mock_executor = MagicMock()
-        mock_executor.execute = AsyncMock()
-
-        scheduler = HeartbeatScheduler(
-            config=config,
-            executor=mock_executor,
-            get_target_chat=lambda: None,
-        )
-
-        scheduler.start()
-        await asyncio.sleep(0.1)
-        await scheduler.stop()
-
-        # Should NOT have executed - no active chat
-        mock_executor.execute.assert_not_called()
+        # Should call execute without chat_id keyword argument
+        mock_executor.execute.assert_called()
+        call_kwargs = mock_executor.execute.call_args[1]
+        assert "chat_id" not in call_kwargs
 
     @pytest.mark.asyncio
     async def test_calls_on_alert_when_should_deliver(self):
@@ -229,7 +204,6 @@ class TestHeartbeatSchedulerExecution:
             config=config,
             executor=mock_executor,
             on_alert=on_alert,
-            get_target_chat=lambda: 12345,
         )
 
         scheduler.start()
@@ -257,7 +231,6 @@ class TestHeartbeatSchedulerExecution:
             config=config,
             executor=mock_executor,
             on_alert=on_alert,
-            get_target_chat=lambda: 12345,
         )
 
         scheduler.start()
@@ -280,7 +253,6 @@ class TestHeartbeatSchedulerActiveHours:
         scheduler = HeartbeatScheduler(
             config=config,
             executor=mock_executor,
-            get_target_chat=lambda: 12345,
         )
 
         # Mock is_within_active_hours to return False
@@ -308,7 +280,6 @@ class TestHeartbeatSchedulerActiveHours:
         scheduler = HeartbeatScheduler(
             config=config,
             executor=mock_executor,
-            get_target_chat=lambda: 12345,
         )
 
         # Mock is_within_active_hours to return True
@@ -336,7 +307,6 @@ class TestHeartbeatSchedulerActiveHours:
         scheduler = HeartbeatScheduler(
             config=config,
             executor=mock_executor,
-            get_target_chat=lambda: 12345,
         )
 
         scheduler.start()
@@ -389,7 +359,6 @@ class TestHeartbeatSchedulerInterval:
             config=config,
             executor=mock_executor,
             on_alert=on_alert,
-            get_target_chat=lambda: 12345,
         )
 
         # Trigger without starting (manual execution)
@@ -437,7 +406,6 @@ class TestHeartbeatSchedulerErrorHandling:
         scheduler = HeartbeatScheduler(
             config=config,
             executor=mock_executor,
-            get_target_chat=lambda: 12345,
         )
 
         scheduler.start()
