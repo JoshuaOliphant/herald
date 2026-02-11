@@ -238,7 +238,7 @@ class WebhookHandler:
             response = await self.http_client.post(url, json=payload)
             if response.status_code != 200:
                 logger.error(f"Failed to send message: {response.text}")
-                # If MarkdownV2 failed, retry without parse_mode
+                # If HTML parsing failed, retry without parse_mode
                 if parse_mode and "can't parse" in response.text.lower():
                     logger.info("Retrying without parse_mode")
                     await self._send_message(chat_id, text, parse_mode=None)

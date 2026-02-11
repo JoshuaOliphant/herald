@@ -16,6 +16,7 @@ dependencies = [
     "pydantic-settings>=2.0",
     "python-dotenv>=1.0",
     "httpx>=0.28",
+    "mistune>=3.0",
 ]
 
 [project.optional-dependencies]
