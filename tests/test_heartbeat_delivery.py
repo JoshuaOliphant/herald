@@ -105,7 +105,7 @@ class TestHeartbeatDeliveryDeliver:
 
     @pytest.mark.asyncio
     async def test_deliver_sends_message_to_target(self):
-        """Test that deliver sends message to target chat."""
+        """Test that deliver sends formatted message to target chat."""
         mock_send = AsyncMock()
         delivery = HeartbeatDelivery(send_message=mock_send, target="12345")
 
@@ -121,7 +121,8 @@ class TestHeartbeatDeliveryDeliver:
         mock_send.assert_called_once()
         call_args = mock_send.call_args
         assert call_args[0][0] == 12345  # chat_id
-        assert "Alert: Something needs attention!" in call_args[0][1]  # text
+        assert "Something needs attention!" in call_args[0][1]  # text
+        assert call_args[0][2] == "HTML"  # parse_mode
 
     @pytest.mark.asyncio
     async def test_deliver_skips_when_target_is_none(self):
@@ -193,7 +194,28 @@ class TestHeartbeatDeliveryDeliver:
         await delivery.deliver(result)
 
         message = mock_send.call_args[0][1]
-        assert "💓" in message or "🫀" in message or "⚠️" in message
+        assert "💓" in message
+
+    @pytest.mark.asyncio
+    async def test_deliver_formats_as_html(self):
+        """Test that delivered messages use HTML parse_mode."""
+        mock_send = AsyncMock()
+        delivery = HeartbeatDelivery(send_message=mock_send, target="12345")
+
+        result = HeartbeatResult(
+            success=True,
+            content="**Bold alert** with `code`",
+            should_deliver=True,
+            is_ok=False,
+        )
+
+        await delivery.deliver(result)
+
+        message = mock_send.call_args[0][1]
+        parse_mode = mock_send.call_args[0][2]
+        assert "<b>" in message  # Bold converted to HTML
+        assert "<code>" in message  # Code converted to HTML
+        assert parse_mode == "HTML"
 
     @pytest.mark.asyncio
     async def test_deliver_handles_send_error_gracefully(self):

@@ -282,9 +282,11 @@ def create_app(settings: Settings) -> FastAPI:
 
         if heartbeat_config.enabled:
             # Create a wrapper for send_message that matches the callback signature
-            async def send_message_wrapper(chat_id: int, text: str) -> None:
+            async def send_message_wrapper(
+                chat_id: int, text: str, parse_mode: str | None = None
+            ) -> None:
                 if handler:
-                    await handler._send_message(chat_id, text)
+                    await handler._send_message(chat_id, text, parse_mode=parse_mode)
 
             heartbeat_delivery = HeartbeatDelivery(
                 send_message=send_message_wrapper,

@@ -4,12 +4,13 @@
 import logging
 from collections.abc import Awaitable, Callable
 
+from herald.formatter import format_for_telegram
 from herald.heartbeat.executor import HeartbeatResult
 
 logger = logging.getLogger(__name__)
 
-# Type alias for the send_message callback
-SendMessageCallback = Callable[[int, str], Awaitable[None]]
+# Type alias for the send_message callback (chat_id, text, parse_mode)
+SendMessageCallback = Callable[[int, str, str | None], Awaitable[None]]
 
 
 class HeartbeatDelivery:
@@ -87,11 +88,13 @@ class HeartbeatDelivery:
             logger.debug("No target chat for heartbeat delivery")
             return
 
-        # Format the message with a heartbeat indicator
-        message = f"💓 **Heartbeat Alert**\n\n{result.content}"
+        # Format the message with a heartbeat indicator, converting markdown to HTML
+        raw_message = f"💓 **Heartbeat Alert**\n\n{result.content}"
+        formatted_messages = format_for_telegram(raw_message)
 
         try:
-            await self.send_message(chat_id, message)
+            for msg in formatted_messages:
+                await self.send_message(chat_id, msg.text, msg.parse_mode)
             logger.info(f"Delivered heartbeat alert to chat {chat_id}")
         except Exception as e:
             logger.error(f"Failed to deliver heartbeat alert: {e}")
