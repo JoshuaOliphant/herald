@@ -44,11 +44,13 @@ class WebhookHandler:
         executor: ClaudeExecutor,
         on_activity: Callable[[int], None] | None = None,
         chat_history: ChatHistoryManager | None = None,
+        heartbeat_delivery: HeartbeatDelivery | None = None,
     ):
         self.settings = settings
         self.executor = executor
         self._http_client: httpx.AsyncClient | None = None
         self._on_activity = on_activity
+        self._heartbeat_delivery = heartbeat_delivery
         # Track processed update IDs to prevent duplicate processing from Telegram retries
         self._processed_updates: OrderedDict[int, bool] = OrderedDict()
         self._max_tracked_updates = 1000  # Limit memory usage
@@ -163,9 +165,24 @@ class WebhookHandler:
                 await self._send_chat_action(chat_id, "typing")
                 await asyncio.sleep(self.TYPING_INTERVAL)
 
-        # Prepend current date/time so Claude knows when this message was sent
+        # Build structured prompt with XML-delimited metadata
         now = datetime.now().strftime("%A, %B %-d, %Y at %-I:%M %p")
-        prompt = f"[Current time: {now}]\n\n{text}"
+        parts = [f"<current-time>{now}</current-time>"]
+
+        # Inject heartbeat context if the user may be replying to a heartbeat
+        if self._heartbeat_delivery:
+            last_heartbeat = self._heartbeat_delivery.consume_last_content()
+            if last_heartbeat:
+                parts.append(
+                    "<recent-heartbeat>\n"
+                    "A heartbeat alert was recently sent to this chat. "
+                    "The user may be replying to it. Here is what it said:\n\n"
+                    f"{last_heartbeat}\n"
+                    "</recent-heartbeat>"
+                )
+
+        parts.append(text)
+        prompt = "\n\n".join(parts)
 
         typing_task = asyncio.create_task(send_typing_loop())
         try:
@@ -307,11 +324,12 @@ def create_app(settings: Settings) -> FastAPI:
                 on_alert=heartbeat_delivery.deliver,
             )
 
-        # Create webhook handler with activity tracking
+        # Create webhook handler with activity tracking and heartbeat context bridge
         handler = WebhookHandler(
             settings,
             executor,
             on_activity=heartbeat_delivery.record_activity if heartbeat_delivery else None,
+            heartbeat_delivery=heartbeat_delivery,
         )
         await handler.start()
 

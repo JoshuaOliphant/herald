@@ -38,6 +38,7 @@ class HeartbeatDelivery:
         self.send_message = send_message
         self.target = target
         self._last_active_chat: int | None = None
+        self._last_delivered_content: str | None = None
 
     def record_activity(self, chat_id: int) -> None:
         """
@@ -72,6 +73,20 @@ class HeartbeatDelivery:
             logger.warning(f"Invalid target chat ID: {self.target}")
             return None
 
+    def consume_last_content(self) -> str | None:
+        """
+        Return and clear the last delivered heartbeat content.
+
+        This is a one-shot read: the content is cleared after retrieval
+        so it doesn't pollute subsequent user messages.
+
+        Returns:
+            The last delivered content, or None if nothing was delivered
+        """
+        content = self._last_delivered_content
+        self._last_delivered_content = None
+        return content
+
     async def deliver(self, result: HeartbeatResult) -> None:
         """
         Deliver a heartbeat alert to the configured target.
@@ -95,6 +110,7 @@ class HeartbeatDelivery:
         try:
             for msg in formatted_messages:
                 await self.send_message(chat_id, msg.text, msg.parse_mode)
+            self._last_delivered_content = result.content
             logger.info(f"Delivered heartbeat alert to chat {chat_id}")
         except Exception as e:
             logger.error(f"Failed to deliver heartbeat alert: {e}")

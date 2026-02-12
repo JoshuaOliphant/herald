@@ -234,6 +234,46 @@ class TestHeartbeatDeliveryDeliver:
         await delivery.deliver(result)
 
 
+class TestHeartbeatDeliveryLastContent:
+    """Tests for last delivered content storage and consumption."""
+
+    @pytest.mark.asyncio
+    async def test_last_delivered_content_stored(self):
+        """After deliver(), _last_delivered_content should hold the result content."""
+        mock_send = AsyncMock()
+        delivery = HeartbeatDelivery(send_message=mock_send, target="12345")
+
+        result = HeartbeatResult(
+            success=True,
+            content="Alert: Something needs attention!",
+            should_deliver=True,
+            is_ok=False,
+        )
+
+        await delivery.deliver(result)
+
+        assert delivery._last_delivered_content == "Alert: Something needs attention!"
+
+    def test_consume_last_content_returns_and_clears(self):
+        """consume_last_content() should return content once, then None."""
+        mock_send = AsyncMock()
+        delivery = HeartbeatDelivery(send_message=mock_send)
+        delivery._last_delivered_content = "Some heartbeat content"
+
+        first = delivery.consume_last_content()
+        second = delivery.consume_last_content()
+
+        assert first == "Some heartbeat content"
+        assert second is None
+
+    def test_consume_last_content_none_when_no_delivery(self):
+        """consume_last_content() should return None if nothing was delivered."""
+        mock_send = AsyncMock()
+        delivery = HeartbeatDelivery(send_message=mock_send)
+
+        assert delivery.consume_last_content() is None
+
+
 class TestHeartbeatDeliveryAsCallback:
     """Tests for using delivery as scheduler callback."""
 

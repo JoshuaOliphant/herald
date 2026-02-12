@@ -9,6 +9,7 @@ import pytest
 
 from herald.config import Settings
 from herald.executor import ClaudeExecutor, ExecutionResult
+from herald.heartbeat.delivery import HeartbeatDelivery
 from herald.webhook import TelegramUpdate, WebhookHandler
 
 
@@ -173,9 +174,9 @@ class TestWebhookHandlerAsync:
         # Should execute the prompt with chat_id (plus streaming callback)
         mock_executor.execute.assert_called_once()
         call_args = mock_executor.execute.call_args
-        # Prompt is prefixed with current date/time
+        # Prompt is prefixed with current date/time in XML tag
         prompt = call_args.args[0]
-        assert "[Current time:" in prompt
+        assert "<current-time>" in prompt
         assert "What's on my todo list?" in prompt
         assert call_args.args[1] == 12345
         assert "on_assistant_text" in call_args.kwargs
@@ -499,3 +500,121 @@ class TestWebhookHandlerAsync:
         send_calls = handler._http_client.post.call_args_list
         message_calls = [c for c in send_calls if "sendMessage" in str(c)]
         assert any("timed out" in str(c).lower() for c in message_calls)
+
+
+@pytest.mark.asyncio
+class TestHeartbeatContextInjection:
+    """Tests for heartbeat context injection into user prompts."""
+
+    async def test_heartbeat_context_injected_into_prompt(
+        self, mock_settings, mock_executor,
+    ):
+        """When heartbeat content exists, prompt should include <recent-heartbeat> tag."""
+        mock_send = AsyncMock()
+        heartbeat_delivery = HeartbeatDelivery(send_message=mock_send)
+        heartbeat_delivery._last_delivered_content = "You have 3 overdue tasks"
+
+        handler = WebhookHandler(
+            mock_settings, mock_executor, heartbeat_delivery=heartbeat_delivery,
+        )
+        handler._http_client = AsyncMock()
+        handler._http_client.post = AsyncMock(return_value=MagicMock(status_code=200))
+
+        update = TelegramUpdate(
+            update_id=100,
+            message={
+                "from": {"id": 12345, "username": "laboeuf"},
+                "chat": {"id": 12345},
+                "text": "What tasks are overdue?",
+            },
+        )
+
+        await handler.handle_update(update)
+
+        prompt = mock_executor.execute.call_args.args[0]
+        assert "<recent-heartbeat>" in prompt
+        assert "You have 3 overdue tasks" in prompt
+        assert "</recent-heartbeat>" in prompt
+
+    async def test_heartbeat_context_consumed_after_use(
+        self, mock_settings, mock_executor,
+    ):
+        """Second message should NOT include heartbeat context (consumed after first)."""
+        mock_send = AsyncMock()
+        heartbeat_delivery = HeartbeatDelivery(send_message=mock_send)
+        heartbeat_delivery._last_delivered_content = "Alert: check logs"
+
+        handler = WebhookHandler(
+            mock_settings, mock_executor, heartbeat_delivery=heartbeat_delivery,
+        )
+        handler._http_client = AsyncMock()
+        handler._http_client.post = AsyncMock(return_value=MagicMock(status_code=200))
+
+        # First message — should consume heartbeat context
+        update1 = TelegramUpdate(
+            update_id=101,
+            message={
+                "from": {"id": 12345, "username": "laboeuf"},
+                "chat": {"id": 12345},
+                "text": "What happened?",
+            },
+        )
+        await handler.handle_update(update1)
+
+        # Second message — heartbeat context should be gone
+        update2 = TelegramUpdate(
+            update_id=102,
+            message={
+                "from": {"id": 12345, "username": "laboeuf"},
+                "chat": {"id": 12345},
+                "text": "Tell me more",
+            },
+        )
+        await handler.handle_update(update2)
+
+        second_prompt = mock_executor.execute.call_args_list[1].args[0]
+        assert "<recent-heartbeat>" not in second_prompt
+
+    async def test_no_heartbeat_context_when_none_delivered(
+        self, mock_settings, mock_executor,
+    ):
+        """Prompt should not include heartbeat tag when nothing was delivered."""
+        handler = WebhookHandler(mock_settings, mock_executor)
+        handler._http_client = AsyncMock()
+        handler._http_client.post = AsyncMock(return_value=MagicMock(status_code=200))
+
+        update = TelegramUpdate(
+            update_id=103,
+            message={
+                "from": {"id": 12345, "username": "laboeuf"},
+                "chat": {"id": 12345},
+                "text": "Hello",
+            },
+        )
+
+        await handler.handle_update(update)
+
+        prompt = mock_executor.execute.call_args.args[0]
+        assert "<recent-heartbeat>" not in prompt
+
+    async def test_current_time_uses_xml_tag(self, mock_settings, mock_executor):
+        """Prompt should use <current-time> XML tag instead of bracket notation."""
+        handler = WebhookHandler(mock_settings, mock_executor)
+        handler._http_client = AsyncMock()
+        handler._http_client.post = AsyncMock(return_value=MagicMock(status_code=200))
+
+        update = TelegramUpdate(
+            update_id=104,
+            message={
+                "from": {"id": 12345, "username": "laboeuf"},
+                "chat": {"id": 12345},
+                "text": "What time is it?",
+            },
+        )
+
+        await handler.handle_update(update)
+
+        prompt = mock_executor.execute.call_args.args[0]
+        assert "<current-time>" in prompt
+        assert "</current-time>" in prompt
+        assert "[Current time:" not in prompt
