@@ -123,6 +123,15 @@ class TestHeartbeatExecutorPromptBuilding:
         assert "Check API health" in prompt
         assert "Verify database connections" in prompt
 
+    def test_build_prompt_includes_current_time(self, tmp_path):
+        """Test that prompt includes current time in XML tag."""
+        config = HeartbeatConfig()
+        executor = HeartbeatExecutor(config=config, working_dir=tmp_path)
+        prompt = executor._build_prompt()
+
+        assert "<current-time>" in prompt
+        assert "</current-time>" in prompt
+
     def test_build_prompt_missing_heartbeat_file(self, tmp_path):
         """Test prompt building when HEARTBEAT.md doesn't exist."""
         heartbeat_file = tmp_path / "HEARTBEAT.md"  # Doesn't exist

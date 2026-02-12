@@ -3,6 +3,7 @@
 
 import logging
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 
 from herald.executor import ClaudeExecutor, ExecutionResult, create_executor
@@ -100,6 +101,10 @@ class HeartbeatExecutor:
         3. Instructions for HEARTBEAT_OK response format
         """
         parts: list[str] = []
+
+        # Include current time so Claude knows when this heartbeat runs
+        now = datetime.now().strftime("%A, %B %-d, %Y at %-I:%M %p")
+        parts.append(f"<current-time>{now}</current-time>")
 
         # Start with custom or default prompt
         if self.config.prompt:
