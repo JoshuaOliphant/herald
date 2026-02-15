@@ -109,7 +109,11 @@ class Settings(BaseSettings):
         if self.heartbeat_prompt_file:
             if self.heartbeat_prompt_file.exists():
                 prompt = self.heartbeat_prompt_file.read_text().strip()
-                logger.info(f"Loaded heartbeat prompt from {self.heartbeat_prompt_file} ({len(prompt)} chars)")
+                logger.info(
+                    "Loaded heartbeat prompt from %s (%d chars)",
+                    self.heartbeat_prompt_file,
+                    len(prompt),
+                )
             else:
                 logger.warning(f"Heartbeat prompt file not found: {self.heartbeat_prompt_file}")
 

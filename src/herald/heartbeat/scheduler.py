@@ -2,6 +2,7 @@
 # ABOUTME: Manages lifecycle (start/stop), active hours, and alert delivery
 
 import asyncio
+import contextlib
 import logging
 from collections.abc import Awaitable, Callable
 
@@ -93,10 +94,8 @@ class HeartbeatScheduler:
         self._running = False
         if self._task is not None:
             self._task.cancel()
-            try:
+            with contextlib.suppress(asyncio.CancelledError):
                 await self._task
-            except asyncio.CancelledError:
-                pass
             self._task = None
 
         logger.info("Heartbeat scheduler stopped")
@@ -186,7 +185,11 @@ class HeartbeatScheduler:
             elif result.is_ok:
                 logger.info(f"Heartbeat OK (suppressed, {len(result.content)} chars)")
             else:
-                logger.info(f"Heartbeat complete (is_ok={result.is_ok}, should_deliver={result.should_deliver})")
+                logger.info(
+                    "Heartbeat complete (is_ok=%s, should_deliver=%s)",
+                    result.is_ok,
+                    result.should_deliver,
+                )
 
         except Exception as e:
             logger.exception(f"Unexpected error in heartbeat execution: {e}")
