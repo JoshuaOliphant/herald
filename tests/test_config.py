@@ -33,8 +33,8 @@ class TestSettings:
 
     def test_parse_user_ids_single_int(self):
         """Single int should be wrapped in a list."""
-        result = Settings.parse_user_ids(6360227946)
-        assert result == [6360227946]
+        result = Settings.parse_user_ids(123456789)
+        assert result == [123456789]
 
     def test_validate_ready_missing_token(self):
         """Validation should fail when token is missing."""
@@ -106,6 +106,39 @@ class TestHeraldMemoryPath:
             memory_path=Path("custom/memory"),
         )
         assert settings.herald_memory_path == tmp_path / "custom" / "memory"
+
+
+class TestChatHistoryPath:
+    """Tests for chat_history_path property."""
+
+    def test_chat_history_path_default(self, tmp_path):
+        """Should default to areas/herald/chat-history under second_brain_path."""
+        settings = Settings(
+            telegram_bot_token="test_token",
+            allowed_telegram_user_ids=[123],
+            second_brain_path=tmp_path,
+        )
+        assert settings.chat_history_path == tmp_path / "areas" / "herald" / "chat-history"
+
+    def test_chat_history_path_follows_memory_path(self, tmp_path):
+        """Should derive from herald_memory_path when MEMORY_PATH is set."""
+        settings = Settings(
+            telegram_bot_token="test_token",
+            allowed_telegram_user_ids=[123],
+            second_brain_path=tmp_path,
+            memory_path=Path("custom/memory"),
+        )
+        assert settings.chat_history_path == tmp_path / "custom" / "memory" / "chat-history"
+
+    def test_chat_history_path_explicit_override(self, tmp_path):
+        """Should respect CHAT_HISTORY_PATH override."""
+        settings = Settings(
+            telegram_bot_token="test_token",
+            allowed_telegram_user_ids=[123],
+            second_brain_path=tmp_path,
+            chat_history_path_override=Path("my/custom/history"),
+        )
+        assert settings.chat_history_path == tmp_path / "my" / "custom" / "history"
 
 
 class TestModelAndAgentTeamsSettings:

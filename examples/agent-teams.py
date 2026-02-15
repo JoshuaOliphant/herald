@@ -1,8 +1,27 @@
-# ABOUTME: Experiment to test if Agent Teams work headlessly via the SDK
-# ABOUTME: Enables CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS and asks for a team review
+# ABOUTME: Example script demonstrating Agent Teams with the Claude Agent SDK
+# ABOUTME: Shows how to use receive_messages() to handle multi-agent team responses
+
+"""
+Agent Teams Example
+===================
+
+This script demonstrates how Herald's agent teams feature works under the hood.
+It connects to Claude Code via the Agent SDK, enables experimental agent teams,
+and asks Claude to spawn a team of agents to review a knowledge base.
+
+Usage:
+    # Set SECOND_BRAIN_PATH to your knowledge base directory
+    export SECOND_BRAIN_PATH=/path/to/your/second-brain
+    uv run python examples/agent-teams.py
+
+Requirements:
+    - Claude Code installed and authenticated
+    - claude-agent-sdk package (included in Herald's dependencies)
+"""
 
 import asyncio
 import logging
+import os
 import sys
 
 from claude_agent_sdk import (
@@ -21,7 +40,9 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-SECOND_BRAIN_PATH = "/Users/joshuaoliphant/Library/CloudStorage/Dropbox/python_workspace/second_brain"
+SECOND_BRAIN_PATH = os.environ.get(
+    "SECOND_BRAIN_PATH", os.path.expanduser("~/second-brain")
+)
 
 PROMPT = """Create an agent team to review my active projects. Spawn three teammates:
 - One to check projects/_active/ for stale projects (no recent commits in 7+ days)
@@ -72,7 +93,8 @@ async def main():
                 f"[RESULT #{result_count}] turns={message.num_turns} "
                 f"cost=${message.total_cost_usd:.4f} "
                 f"duration={message.duration_ms}ms "
-                f"result_preview={message.result[:100] if message.result else 'None'}"
+                f"result_preview="
+                f"{message.result[:100] if message.result else 'None'}"
             )
 
     print("\n" + "=" * 60)

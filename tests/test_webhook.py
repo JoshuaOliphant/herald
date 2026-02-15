@@ -163,7 +163,7 @@ class TestWebhookHandlerAsync:
         update = TelegramUpdate(
             update_id=1,
             message={
-                "from": {"id": 12345, "username": "laboeuf"},
+                "from": {"id": 12345, "username": "testuser"},
                 "chat": {"id": 12345},
                 "text": "What's on my todo list?",
             },
@@ -192,7 +192,7 @@ class TestWebhookHandlerAsync:
         update = TelegramUpdate(
             update_id=1,
             message={
-                "from": {"id": 12345, "username": "laboeuf"},
+                "from": {"id": 12345, "username": "testuser"},
                 "chat": {"id": 12345},
                 "text": "/reset",
             },
@@ -217,7 +217,7 @@ class TestWebhookHandlerAsync:
         update = TelegramUpdate(
             update_id=1,
             message={
-                "from": {"id": 12345, "username": "laboeuf"},
+                "from": {"id": 12345, "username": "testuser"},
                 "chat": {"id": 12345},
                 "text": "/RESET",
             },
@@ -257,7 +257,7 @@ class TestWebhookHandlerAsync:
         update = TelegramUpdate(
             update_id=1,
             message={
-                "from": {"id": 12345, "username": "laboeuf"},
+                "from": {"id": 12345, "username": "testuser"},
                 "chat": {"id": 12345},
                 "text": "Do the tasks",
             },
@@ -286,7 +286,7 @@ class TestWebhookHandlerAsync:
         update = TelegramUpdate(
             update_id=1,
             message={
-                "from": {"id": 12345, "username": "laboeuf"},
+                "from": {"id": 12345, "username": "testuser"},
                 "chat": {"id": 12345},
                 "text": "Analyze",
             },
@@ -317,7 +317,7 @@ class TestWebhookHandlerAsync:
         update = TelegramUpdate(
             update_id=2,
             message={
-                "from": {"id": 12345, "username": "laboeuf"},
+                "from": {"id": 12345, "username": "testuser"},
                 "chat": {"id": 12345},
                 "text": "Quick question",
             },
@@ -355,7 +355,7 @@ class TestWebhookHandlerAsync:
         update = TelegramUpdate(
             update_id=3,
             message={
-                "from": {"id": 12345, "username": "laboeuf"},
+                "from": {"id": 12345, "username": "testuser"},
                 "chat": {"id": 12345},
                 "text": "Review everything",
             },
@@ -384,7 +384,7 @@ class TestWebhookHandlerAsync:
         update = TelegramUpdate(
             update_id=1,
             message={
-                "from": {"id": 12345, "username": "laboeuf"},
+                "from": {"id": 12345, "username": "testuser"},
                 "chat": {"id": 12345},
                 "text": "Hello",
             },
@@ -414,7 +414,7 @@ class TestWebhookHandlerAsync:
         update = TelegramUpdate(
             update_id=10,
             message={
-                "from": {"id": 12345, "username": "laboeuf"},
+                "from": {"id": 12345, "username": "testuser"},
                 "chat": {"id": 12345},
                 "text": "Do research",
             },
@@ -446,7 +446,7 @@ class TestWebhookHandlerAsync:
         update = TelegramUpdate(
             update_id=11,
             message={
-                "from": {"id": 12345, "username": "laboeuf"},
+                "from": {"id": 12345, "username": "testuser"},
                 "chat": {"id": 12345},
                 "text": "Quick question",
             },
@@ -488,7 +488,7 @@ class TestWebhookHandlerAsync:
         update = TelegramUpdate(
             update_id=12,
             message={
-                "from": {"id": 12345, "username": "laboeuf"},
+                "from": {"id": 12345, "username": "testuser"},
                 "chat": {"id": 12345},
                 "text": "Heavy research task",
             },
@@ -523,7 +523,7 @@ class TestHeartbeatContextInjection:
         update = TelegramUpdate(
             update_id=100,
             message={
-                "from": {"id": 12345, "username": "laboeuf"},
+                "from": {"id": 12345, "username": "testuser"},
                 "chat": {"id": 12345},
                 "text": "What tasks are overdue?",
             },
@@ -554,7 +554,7 @@ class TestHeartbeatContextInjection:
         update1 = TelegramUpdate(
             update_id=101,
             message={
-                "from": {"id": 12345, "username": "laboeuf"},
+                "from": {"id": 12345, "username": "testuser"},
                 "chat": {"id": 12345},
                 "text": "What happened?",
             },
@@ -565,7 +565,7 @@ class TestHeartbeatContextInjection:
         update2 = TelegramUpdate(
             update_id=102,
             message={
-                "from": {"id": 12345, "username": "laboeuf"},
+                "from": {"id": 12345, "username": "testuser"},
                 "chat": {"id": 12345},
                 "text": "Tell me more",
             },
@@ -586,7 +586,7 @@ class TestHeartbeatContextInjection:
         update = TelegramUpdate(
             update_id=103,
             message={
-                "from": {"id": 12345, "username": "laboeuf"},
+                "from": {"id": 12345, "username": "testuser"},
                 "chat": {"id": 12345},
                 "text": "Hello",
             },
@@ -606,7 +606,7 @@ class TestHeartbeatContextInjection:
         update = TelegramUpdate(
             update_id=104,
             message={
-                "from": {"id": 12345, "username": "laboeuf"},
+                "from": {"id": 12345, "username": "testuser"},
                 "chat": {"id": 12345},
                 "text": "What time is it?",
             },

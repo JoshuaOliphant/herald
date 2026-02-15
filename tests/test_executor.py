@@ -316,7 +316,7 @@ class TestMemoryLoading:
         """Should load and format memory files."""
         memory_dir = tmp_path / "memory"
         memory_dir.mkdir()
-        (memory_dir / "observations.md").write_text("La Boeuf prefers short responses")
+        (memory_dir / "observations.md").write_text("User prefers short responses")
         (memory_dir / "learnings.md").write_text("Keep it under 500 chars")
 
         executor = ClaudeExecutor(working_dir=tmp_path, memory_path=memory_dir)
@@ -324,7 +324,7 @@ class TestMemoryLoading:
 
         assert "# Herald Memory" in context
         assert "## Observations" in context
-        assert "La Boeuf prefers short responses" in context
+        assert "User prefers short responses" in context
         assert "## Learnings" in context
 
     def test_load_memory_context_missing_dir(self, tmp_path):

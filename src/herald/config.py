@@ -25,6 +25,7 @@ class Settings(BaseSettings):
     # Paths (override with SECOND_BRAIN_PATH env var)
     second_brain_path: Path = Path.home() / "second-brain"
     memory_path: Path | None = None  # Relative to second_brain_path if set
+    chat_history_path_override: Path | None = None  # Relative to second_brain_path if set
     heartbeat_file: Path | None = None  # Path to HEARTBEAT.md file
 
     # Claude model settings
@@ -52,7 +53,9 @@ class Settings(BaseSettings):
     @property
     def chat_history_path(self) -> Path:
         """Path to chat history storage."""
-        return self.second_brain_path / "areas" / "herald" / "chat-history"
+        if self.chat_history_path_override:
+            return self.second_brain_path / self.chat_history_path_override
+        return self.herald_memory_path / "chat-history"
 
     # Server settings
     host: str = "0.0.0.0"

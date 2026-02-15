@@ -40,9 +40,18 @@ POST_RESULT_IDLE_TIMEOUT = 30.0
 # substantive content (proposals, tables, analysis).
 MIN_STREAM_LENGTH = 200
 
-# Memory loading configuration
-# Priority order: most actionable first
-# Each tuple: (filename, budget_ratio)
+# Memory loading configuration.
+#
+# Herald primes each Claude Code session with context from memory files stored
+# in the herald_memory_path directory. Files are loaded in priority order (most
+# actionable first) and each receives a percentage of the MAX_MEMORY_CHARS
+# budget. This keeps the system prompt compact while giving the agent relevant
+# context about pending work, learned patterns, and user preferences.
+#
+# Format: list of (filename, budget_ratio) tuples. Ratios should sum to 1.0.
+# Users can customize content by editing the files directly; the filenames and
+# budget ratios are intentionally not env-configurable to avoid the complexity
+# of parsing structured tuples from environment variables.
 MEMORY_FILES_PRIORITY = [
     ("pending.md", 0.3),  # 30% - actionable items
     ("learnings.md", 0.4),  # 40% - service knowledge

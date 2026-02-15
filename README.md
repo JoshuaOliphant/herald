@@ -1,15 +1,19 @@
 # Herald: Telegram Gateway to Claude Code
 
-Herald is a bi-directional Telegram bot that bridges to Claude Code on your Mac, enabling mobile access to your second brain.
+[![Tests](https://github.com/joshuaoliphant/herald/actions/workflows/test.yml/badge.svg)](https://github.com/joshuaoliphant/herald/actions/workflows/test.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
+
+Herald is a self-hosted Telegram bot that bridges to [Claude Code](https://docs.anthropic.com/en/docs/claude-code) on your machine, giving you mobile access to your **second brain** — a personal knowledge management system stored as markdown files in a git repo.
+
+> **What is a "second brain"?** It's a system for organizing your notes, tasks, projects, and learnings in a structured way (often using the [PARA method](https://fortelabs.com/blog/para/)). Herald lets you query, update, and interact with yours from anywhere via Telegram, powered by Claude Code's ability to read, search, and edit files.
 
 ## Architecture
 
 ```
-Phone (Telegram) → Tailscale Funnel → Herald (FastAPI) → Claude Code
-                                          ↓
-                                   Second Brain + Skills
-                                          ↓
-                                   macOS (osascript)
+Phone (Telegram) → HTTPS Tunnel → Herald (FastAPI) → Claude Code (Agent SDK)
+                                       ↓
+                                Second Brain (markdown files)
 ```
 
 ## Quick Start
@@ -27,24 +31,15 @@ Phone (Telegram) → Tailscale Funnel → Herald (FastAPI) → Claude Code
 
 ### 3. Configure Herald
 
-Create a `.env` file in the project root:
-
 ```bash
-# Required: Your Telegram Bot Token (from @BotFather)
-TELEGRAM_BOT_TOKEN=your_bot_token_here
-
-# Required: Comma-separated list of allowed Telegram user IDs
-ALLOWED_TELEGRAM_USER_IDS=123456789
-
-# Optional: Override paths if needed
-# SECOND_BRAIN_PATH=/path/to/your/second_brain
-# CLAUDE_CODE_PATH=/path/to/claude
+cp .env.example .env
+# Edit .env with your bot token and user ID
 ```
 
 ### 4. Install and Run
 
 ```bash
-cd ~/Dropbox/python_workspace/herald
+cd herald
 
 # Install dependencies
 uv sync
@@ -53,19 +48,30 @@ uv sync
 uv run herald
 ```
 
-### 5. Set Up Tailscale Funnel
+### 5. Expose Herald to the Internet
 
+Herald needs a public HTTPS endpoint for Telegram webhooks. Options:
+
+**Tailscale Funnel** (recommended for always-on setups):
 ```bash
-# Enable Tailscale Funnel (one-time)
 tailscale funnel 8080
-
 # Note your funnel URL (e.g., https://your-mac.ts.net)
+```
+
+**ngrok** (quick testing):
+```bash
+ngrok http 8080
+```
+
+**Cloudflare Tunnels** (production):
+```bash
+cloudflared tunnel --url http://localhost:8080
 ```
 
 ### 6. Register Webhook with Telegram
 
 ```bash
-curl "https://api.telegram.org/bot<YOUR_TOKEN>/setWebhook?url=https://<YOUR_MAC>.ts.net/webhook"
+curl "https://api.telegram.org/bot<YOUR_TOKEN>/setWebhook?url=https://<YOUR_DOMAIN>/webhook"
 ```
 
 ## Configuration Options
@@ -76,8 +82,10 @@ curl "https://api.telegram.org/bot<YOUR_TOKEN>/setWebhook?url=https://<YOUR_MAC>
 |----------|----------|---------|-------------|
 | `TELEGRAM_BOT_TOKEN` | Yes | - | Bot token from @BotFather |
 | `ALLOWED_TELEGRAM_USER_IDS` | Yes | - | Comma-separated user IDs |
-| `SECOND_BRAIN_PATH` | No | `~/second-brain` | Path to second brain |
-| `CLAUDE_CODE_PATH` | No | Auto-detect | Path to Claude CLI |
+| `SECOND_BRAIN_PATH` | No | `~/second-brain` | Path to your knowledge base |
+| `MEMORY_PATH` | No | `areas/herald` | Herald memory dir (relative to second brain) |
+| `CHAT_HISTORY_PATH_OVERRIDE` | No | - | Custom chat history path (relative to second brain) |
+| `CLAUDE_MODEL` | No | SDK default | Override Claude model (e.g., `claude-opus-4-6`) |
 | `HOST` | No | `0.0.0.0` | Server bind address |
 | `PORT` | No | `8080` | Server port |
 | `WEBHOOK_PATH` | No | `/webhook` | Telegram webhook path |
@@ -110,6 +118,8 @@ HEARTBEAT_TARGET=last
 HEARTBEAT_PROMPT_FILE=/path/to/heartbeat-prompt.md
 ```
 
+See `examples/` for sample heartbeat prompt files.
+
 #### How It Works
 
 1. **Periodic execution**: Every `HEARTBEAT_EVERY` interval, Herald runs a Claude Code session with the heartbeat prompt
@@ -123,7 +133,7 @@ Herald implements several security measures:
 
 1. **User Whitelist**: Only configured Telegram user IDs can interact
 2. **Damage Control Hooks**: Extends existing Claude Code guardrails
-3. **Tailscale Funnel**: HTTPS by default, no port forwarding needed
+3. **HTTPS Required**: Telegram webhooks require HTTPS (provided by your tunnel)
 4. **No Secret Exposure**: Bot token never logged or transmitted
 
 ## Development
@@ -147,10 +157,10 @@ uv run ruff check src tests
 1. **Telegram Update**: User sends message to bot
 2. **Webhook Receives**: FastAPI endpoint receives the update
 3. **User Validation**: Checks if user ID is in whitelist
-4. **Claude Execution**: Runs `claude -p "{message}" --dangerously-skip-permissions`
-5. **Output Parsing**: Extracts text from streaming JSON output
-6. **Response Formatting**: Escapes for Telegram MarkdownV2, splits if needed
-7. **Send Response**: Posts back to Telegram chat
+4. **Claude Execution**: Sends prompt to Claude Code via the Agent SDK
+5. **Streaming**: Substantive intermediate text is forwarded to Telegram in real-time
+6. **Response Formatting**: Escapes for Telegram MarkdownV2, splits long messages
+7. **Chat History**: Persists conversation to markdown files for future reference
 
 ## Features
 
@@ -159,26 +169,37 @@ uv run ruff check src tests
 Herald automatically persists all conversations to markdown files in your second brain:
 
 ```
-areas/herald/chat-history/{chat_id}/YYYY-MM-DD.md
+{memory_path}/chat-history/{chat_id}/YYYY-MM-DD.md
 ```
 
 Each daily file contains timestamped user and assistant messages, making conversations searchable and reviewable.
 
 ### Memory Priming
 
-On startup, Herald loads memory files from `areas/herald/` in your second brain with priority-based budget allocation:
+On startup, Herald loads memory files from the herald memory directory with priority-based budget allocation:
 
-- `pending.md` (60% budget) - Pending tasks and follow-ups
-- `learnings.md` (40% budget) - Service knowledge and observations
+- `pending.md` (30% budget) - Actionable items and follow-ups
+- `learnings.md` (40% budget) - Service knowledge and patterns
+- `observations.md` (30% budget) - User preferences
 
 This gives the agent context about your preferences and pending items without consuming excessive context window.
+
+### Agent Teams (Experimental)
+
+Set `AGENT_TEAMS=true` to enable Claude Code's experimental agent teams feature, allowing Herald to spawn multiple agents for complex tasks.
 
 ## Roadmap
 
 - [X] Heartbeat system (proactive check-ins)
 - [X] Chat history persistence
 - [X] Memory priming from second brain
+- [X] Streaming intermediate responses
+- [X] Agent teams support
 - [ ] Voice message support
 - [ ] Image/document handling
 - [ ] Telegram approval for dangerous commands
 - [ ] Multi-user contexts
+
+## License
+
+MIT - see [LICENSE](LICENSE) for details.

@@ -2,7 +2,7 @@
 
 ## What This Is
 
-Herald is a Telegram gateway to Claude Code, enabling La Boeuf to access his second brain from anywhere via mobile.
+Herald is a Telegram gateway to Claude Code, enabling mobile access to your knowledge base ("second brain") from anywhere.
 
 ## Architecture
 
@@ -50,10 +50,23 @@ uv run pyright src
 - Bot token must never be logged or exposed in responses
 - Tailscale Funnel provides HTTPS automatically
 
-## Related Resources
+## Issue Tracking
 
-- **Skill**: `~/.claude/skills/herald/SKILL.md` - Telegram response behavior
-- **Memory**: `second_brain/areas/herald/` - Herald's persistent learnings
-- **Second Brain**: `~/Dropbox/python_workspace/second_brain/` - Working directory for Claude Code
+This project uses **GitHub Issues** for issue tracking.
 
-@AGENTS.md
+```bash
+gh issue list                    # Find available work
+gh issue view <number>           # View issue details
+gh issue edit <number> --add-assignee @me  # Claim work
+gh issue close <number>          # Complete work
+```
+
+## Session Completion
+
+**When ending a work session**, you MUST complete ALL steps below. Work is NOT complete until `git push` succeeds.
+
+1. **File issues for remaining work** - Create issues for anything that needs follow-up
+2. **Run quality gates** (if code changed) - Tests, linters, builds
+3. **Update issue status** - Close finished work, update in-progress items
+4. **Push to remote**: `git pull --rebase && git push`
+5. **Verify** - `git status` shows "up to date with origin"
