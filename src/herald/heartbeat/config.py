@@ -3,6 +3,7 @@
 
 from datetime import timedelta
 from typing import Annotated
+from zoneinfo import ZoneInfo
 
 from pydantic import BaseModel, Field, computed_field, field_validator
 
@@ -33,6 +34,7 @@ class HeartbeatConfig(BaseModel):
     target: str = "last"
     active_hours: str | None = None
     ack_max_chars: Annotated[int, Field(gt=0)] = 300
+    timezone: str = "UTC"
     model: str | None = None
 
     @field_validator("every")
@@ -90,6 +92,16 @@ class HeartbeatConfig(BaseModel):
             return v
         except ValueError as e:
             raise ValueError(f"Invalid active_hours format: {e}") from e
+
+    @field_validator("timezone")
+    @classmethod
+    def validate_timezone(cls, v: str) -> str:
+        """Validate the timezone string is a known IANA timezone."""
+        try:
+            ZoneInfo(v)
+            return v
+        except (KeyError, ValueError) as e:
+            raise ValueError(f"Invalid timezone: {v}") from e
 
     @computed_field  # type: ignore[prop-decorator]
     @property

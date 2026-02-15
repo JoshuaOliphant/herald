@@ -191,6 +191,25 @@ class TestModelField:
             assert config.model == model_name
 
 
+class TestTimezoneField:
+    """Test the 'timezone' field."""
+
+    def test_default_timezone(self):
+        """Test default timezone is UTC."""
+        config = HeartbeatConfig()
+        assert config.timezone == "UTC"
+
+    def test_custom_timezone(self):
+        """Test that valid timezone strings are accepted."""
+        config = HeartbeatConfig(timezone="America/Los_Angeles")
+        assert config.timezone == "America/Los_Angeles"
+
+    def test_invalid_timezone_raises_validation_error(self):
+        """Test that invalid timezone strings are rejected."""
+        with pytest.raises(ValidationError):
+            HeartbeatConfig(timezone="Not/A/Timezone")
+
+
 class TestDictSerialization:
     """Test model serialization and deserialization."""
 

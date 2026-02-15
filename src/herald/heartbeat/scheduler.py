@@ -162,7 +162,7 @@ class HeartbeatScheduler:
         if not self.config.active_hours:
             return True
 
-        return is_within_active_hours(self.config.active_hours)
+        return is_within_active_hours(self.config.active_hours, tz=self.config.timezone)
 
     async def _execute_heartbeat(self) -> None:
         """

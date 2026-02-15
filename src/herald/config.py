@@ -39,6 +39,7 @@ class Settings(BaseSettings):
     heartbeat_target: str = "last"
     heartbeat_active_hours: str | None = None
     heartbeat_ack_max_chars: int = 300
+    heartbeat_timezone: str = "UTC"
     heartbeat_model: str | None = None
 
     @property
@@ -118,6 +119,7 @@ class Settings(BaseSettings):
             target=self.heartbeat_target,
             active_hours=self.heartbeat_active_hours,
             ack_max_chars=self.heartbeat_ack_max_chars,
+            timezone=self.heartbeat_timezone,
             model=self.heartbeat_model,
         )
 

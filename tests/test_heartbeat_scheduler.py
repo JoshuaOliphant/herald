@@ -316,6 +316,43 @@ class TestHeartbeatSchedulerActiveHours:
         mock_executor.execute.assert_called()
 
 
+    @pytest.mark.asyncio
+    async def test_passes_timezone_to_active_hours_check(self):
+        """Test that scheduler passes config timezone to is_within_active_hours."""
+        config = HeartbeatConfig(
+            enabled=True,
+            every="1h",
+            active_hours="06:00-20:00",
+            timezone="America/Los_Angeles",
+        )
+        mock_executor = MagicMock()
+        mock_executor.execute = AsyncMock(
+            return_value=HeartbeatResult(
+                success=True,
+                content="OK",
+                should_deliver=False,
+                is_ok=True,
+            )
+        )
+
+        scheduler = HeartbeatScheduler(
+            config=config,
+            executor=mock_executor,
+        )
+
+        with patch(
+            "herald.heartbeat.scheduler.is_within_active_hours",
+            return_value=True,
+        ) as mock_check:
+            scheduler.start()
+            await asyncio.sleep(0.1)
+            await scheduler.stop()
+
+        mock_check.assert_called_with(
+            "06:00-20:00", tz="America/Los_Angeles",
+        )
+
+
 class TestHeartbeatSchedulerInterval:
     """Tests for interval timing."""
 
