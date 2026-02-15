@@ -7,48 +7,57 @@ Herald is a Telegram gateway to Claude Code, enabling mobile access to your know
 ## Architecture
 
 ```
-Telegram → Tailscale Funnel → Herald (FastAPI) → Claude Code → Second Brain
+Telegram → HTTPS Tunnel → Herald (FastAPI) → Claude Code (Agent SDK)
+                               ↓
+                        Second Brain (markdown)
 ```
 
 ## Key Files
 
-- `src/herald/webhook.py` - FastAPI webhook handler, user authorization
-- `src/herald/executor.py` - Claude Code CLI wrapper, JSON parsing
-- `src/herald/formatter.py` - Telegram message formatting, MarkdownV2 escaping
-- `src/herald/config.py` - Settings from environment variables
+- `src/herald/webhook.py` - FastAPI webhook handler, user authorization, typing indicators
+- `src/herald/executor.py` - Agent SDK client manager, per-chat conversation continuity
+- `src/herald/formatter.py` - Telegram HTML formatting, message splitting
+- `src/herald/config.py` - Pydantic settings from environment variables
+- `src/herald/chat_history.py` - Conversation persistence to daily markdown files
 - `src/herald/main.py` - Entry point, uvicorn server
+- `src/herald/heartbeat/` - Proactive check-in subsystem (scheduler, classifier, delivery)
 
 ## Development Commands
 
 ```bash
-# Install dependencies
-uv sync
-
-# Run tests
-uv run pytest
-
-# Run with auto-reload
-uv run uvicorn herald.webhook:create_app --factory --reload --port 8080
-
-# Lint
-uv run ruff check src tests
-
-# Type check
-uv run pyright src
+uv sync                          # Install dependencies
+uv run pytest                    # Run tests (286+)
+uv run pytest tests/test_config.py  # Run single test file
+uv run ruff check src tests      # Lint
+uv run ty check src              # Type check
+uv run uvicorn herald.webhook:create_app --factory --reload --port 8080  # Dev server
 ```
+
+## Code Conventions
+
+- All `.py` files start with two `ABOUTME:` comment lines explaining the file's purpose
+- Ruff for linting and formatting (line-length 100, target py311)
+- Tests use `asyncio_mode = "auto"` — no need for `@pytest.mark.asyncio` on test classes
+- Telegram messages use HTML parse mode (not MarkdownV2)
 
 ## Testing Strategy
 
-- Unit tests for config parsing, formatting, executor parsing
+- Unit tests for config parsing, formatting, executor, heartbeat subsystem
 - Integration tests for webhook handler with mocked executor
-- Manual testing via Telegram after Tailscale Funnel setup
+- Manual testing via Telegram after tunnel setup
+
+## Gotchas
+
+- `executor.py` manages one SDK client per `chat_id` with per-chat locks — concurrent messages to the same chat are serialized
+- `MESSAGE_IDLE_TIMEOUT` (1800s) is the hang-detection safety net; `POST_RESULT_IDLE_TIMEOUT` (30s) kicks in after the first ResultMessage
+- `MIN_STREAM_LENGTH` (200 chars) filters short status messages from being streamed to Telegram
+- Heartbeat responses containing `HEARTBEAT_OK` are suppressed (not forwarded to user)
 
 ## Security Notes
 
-- User whitelist is mandatory - empty whitelist rejects all users
-- Uses `--dangerously-skip-permissions` but relies on damage-control hooks
+- User whitelist is mandatory — empty whitelist rejects all users
 - Bot token must never be logged or exposed in responses
-- Tailscale Funnel provides HTTPS automatically
+- HTTPS required for Telegram webhooks (provided by your tunnel)
 
 ## Issue Tracking
 
